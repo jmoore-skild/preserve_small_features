@@ -4,7 +4,7 @@
 
 Needs ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY in the environment and the IDs in config/onshape.yaml.
 Writes geometry/space.step, geometry/space.stl, geometry/keep_parts/KEEP_*.stl, geometry/export.json.
-Endpoint paths and parameter names are marked (verify) in the plan; they are kept in one place here.
+Endpoints verified against skildai.onshape.com on 2026-10-15 (STL tolerance units: see onshape.yaml).
 """
 from __future__ import annotations
 
@@ -39,14 +39,16 @@ class Onshape:
 
     def _send(self, method: str, url: str, **kw) -> requests.Response:
         r = self.s.request(method, url, allow_redirects=False, timeout=120, **kw)
-        # Exports redirect to a download URL; keep credentials only on the same host.
+        # Exports redirect to a regional download host (e.g. skildai -> cad-usw2.onshape.com);
+        # send credentials to Onshape hosts only.
         for _ in range(5):
             if r.status_code not in (301, 302, 303, 307, 308):
                 break
             loc = r.headers["Location"]
-            same = urlparse(loc).netloc in ("", urlparse(self.base).netloc)
-            r = (self.s if same else requests).get(loc, allow_redirects=False, timeout=300,
-                                                    headers=kw.get("headers"))
+            host = urlparse(loc).netloc
+            trusted = host in ("", urlparse(self.base).netloc) or host.endswith(".onshape.com")
+            r = (self.s if trusted else requests).get(loc, allow_redirects=False, timeout=300,
+                                                       headers=kw.get("headers"))
         if not r.ok:
             raise RuntimeError(f"{method} {url} -> HTTP {r.status_code}: {r.text[:500]}")
         return r
@@ -75,6 +77,9 @@ def part_ids_by_name(api: Onshape, oc: dict) -> dict[str, str]:
 
 def export_stl(api: Onshape, oc: dict, part_id: str, dest: Path) -> None:
     r = api.get(f"parts/{_dwe(oc)}/partid/{part_id}/stl", params=oc["stl_params"], accept="*/*")
+    if not r.content:
+        # Onshape answers 200 with an empty body when it cannot honour the tolerances (e.g. chord too fine).
+        raise RuntimeError(f"STL export of part {part_id} returned an empty file; check stl_params in onshape.yaml")
     dest.write_bytes(r.content)
 
 

@@ -52,6 +52,9 @@ def check_geometry(gdir: Path, cfg: dict) -> tuple[Checks, object]:
 
     space = geom.load_mesh(gdir / "space.stl")
     c.add("space watertight volume", space.is_volume)
+    if len(space.faces) == 0:
+        c.add("space.stl readable", False, reason="empty mesh")
+        return c, None
     v_exp = L * H * T - len(bl) * math.pi * r * r * T
     c.add("space volume", abs(space.volume / v_exp - 1) <= VOL_TOL, volume=space.volume, expected=v_exp,
           rel_error=space.volume / v_exp - 1)

@@ -2,19 +2,19 @@
 # API keys come from the environment: ONSHAPE_ACCESS_KEY, ONSHAPE_SECRET_KEY.
 # The IDs are in the Part Studio URL: https://cad.onshape.com/documents/<did>/w/<wid>/e/<eid>
 base_url: https://skildai.onshape.com
-api_version: v10        # (verify) against the current Onshape API
+api_version: v10
 document_id: 32a9e5ac19bf92b5a32f6b78
 workspace_id: ceb8e37b46680ab48ee54c30
 element_id: d4e16886d439739ab7f30a1f   # Part Studio (Feature Studio "TopoTestBeam" is a24c530db0690cd1d762ce5e)
 
-# Query parameters for the per-part STL export, passed through verbatim. (verify) names and units
-# in the API Explorer. Best guess: angle in radians, chord in metres. geometry_check measures the
-# actual bore tessellation against base.yaml's onshape_export tolerances, so a wrong guess fails
-# loudly there rather than silently.
+# Query parameters for the per-part STL export, passed through verbatim. Verified 2026-10-15 on
+# skildai.onshape.com: angleTolerance is in radians; chordTolerance is in the output `units` (mm here),
+# NOT metres. Too fine a chord (1e-5) silently returns an empty file; the exporter rejects that.
+# geometry_check still measures the delivered tessellation against base.yaml's onshape_export spec.
 stl_params:
   mode: binary
   grouping: true
   units: millimeter
   scale: 1
-  angleTolerance: 0.0349066   # 2 deg
-  chordTolerance: 0.00001     # 0.01 mm in metres
+  angleTolerance: 0.0349066   # 2 deg, radians
+  chordTolerance: 0.01        # mm (output units)
