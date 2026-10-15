@@ -1,10 +1,7 @@
-FeatureScript 2796;
-import(path : "onshape/std/common.fs", version : "2796.0");
+FeatureScript 3095;
+import(path : "onshape/std/common.fs", version : "3095.0");
 
 // Topo test beam (plan Phase 1).
-//
-// Paste into a new Feature Studio. KEEP THE TWO HEADER LINES ONSHAPE GENERATES for the new
-// Feature Studio (they carry the current std version) and replace the two lines above with them.
 //
 // Frame: X along the beam (root face at x = 0), Y through the thickness, Z vertical.
 // All bores are through-holes parallel to Y.
@@ -136,20 +133,17 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
                     "corner1" : vector(0, 0, 0) * meter,
                     "corner2" : vector(L, T, H)
                 });
-        var boreTools = [];
         for (var n = 0; n < size(centres); n += 1)
         {
             const c = centres[n];
-            const boreId = id + ("bore" ~ toString(n));
-            fCylinder(context, boreId, {
+            fCylinder(context, id + "bores" + toString(n), {
                         "bottomCenter" : vector(c.x, -1 * millimeter, c.z),
                         "topCenter" : vector(c.x, T + 1 * millimeter, c.z),
                         "radius" : r
                     });
-            boreTools = append(boreTools, qCreatedBy(boreId, EntityType.BODY));
         }
         opBoolean(context, id + "subtract", {
-                    "tools" : qUnion(boreTools),
+                    "tools" : qCreatedBy(id + "bores", EntityType.BODY),
                     "targets" : qCreatedBy(id + "space", EntityType.BODY),
                     "operationType" : BooleanOperationType.SUBTRACTION
                 });
@@ -163,7 +157,7 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
         for (var n = 0; n < size(centres); n += 1)
         {
             const c = centres[n];
-            const keepId = id + ("keep" ~ toString(n));
+            const keepId = id + "keep" + toString(n);
             fCylinder(context, keepId, {
                         "bottomCenter" : vector(c.x, 0 * meter, c.z),
                         "topCenter" : vector(c.x, T, c.z),
@@ -175,4 +169,13 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
                         "value" : "KEEP_" ~ c.name
                     });
         }
+    }, {
+        "length" : 200 * millimeter, "height" : 60 * millimeter, "thickness" : 15 * millimeter,
+        "boreDiameter" : 4.5 * millimeter, "keepDiameter" : 12 * millimeter,
+        "fixCx" : 20 * millimeter, "fixCz" : 30 * millimeter, "fixNx" : 2, "fixNz" : 2,
+        "fixPx" : 20 * millimeter, "fixPz" : 20 * millimeter,
+        "loadCx" : 190 * millimeter, "loadCz" : 30 * millimeter, "loadNx" : 1, "loadNz" : 2,
+        "loadPx" : 20 * millimeter, "loadPz" : 20 * millimeter,
+        "passiveCx" : 100 * millimeter, "passiveCz" : 10 * millimeter, "passiveNx" : 2, "passiveNz" : 1,
+        "passivePx" : 20 * millimeter, "passivePz" : 20 * millimeter
     });

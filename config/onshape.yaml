@@ -1,11 +1,11 @@
 # Onshape document holding the TopoTestBeam Part Studio. IDs only; no secrets.
 # API keys come from the environment: ONSHAPE_ACCESS_KEY, ONSHAPE_SECRET_KEY.
 # The IDs are in the Part Studio URL: https://cad.onshape.com/documents/<did>/w/<wid>/e/<eid>
-base_url: https://cad.onshape.com
+base_url: https://skildai.onshape.com
 api_version: v10        # (verify) against the current Onshape API
-document_id: ""         # TODO(Josh)
-workspace_id: ""        # TODO(Josh)
-element_id: ""          # TODO(Josh): the Part Studio, not the Feature Studio
+document_id: 32a9e5ac19bf92b5a32f6b78
+workspace_id: ceb8e37b46680ab48ee54c30
+element_id: d4e16886d439739ab7f30a1f   # Part Studio (Feature Studio "TopoTestBeam" is a24c530db0690cd1d762ce5e)
 
 # Query parameters for the per-part STL export, passed through verbatim. (verify) names and units
 # in the API Explorer. Best guess: angle in radians, chord in metres. geometry_check measures the
