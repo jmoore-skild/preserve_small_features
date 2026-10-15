@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Planned, not started. Agreed in chat on 2026-10-15.
+**Status:** Phases 1–2 complete; Gate 1 passed 2026-10-15. Next: Phase 3 (smoke test). See Section 13 for handoff notes.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -179,32 +179,32 @@ topo-rebuild-eval/
 
 **FeatureScript.**
 
-- [ ] Write `featurescript/TopoTestBeam.fs`, a custom feature with these parameters, defaulting to the Section 4 values:
+- [x] Write `featurescript/TopoTestBeam.fs`, a custom feature with these parameters, defaulting to the Section 4 values:
   - envelope dimensions,
   - bore diameter and keep diameter,
   - the three bore patterns as per-zone center + count + pitch: FIX 2×2, LOAD 1×2, PASSIVE 2×1.
-- [ ] The feature creates these parts, named with `setProperty(... PropertyType.NAME ...)`:
+- [x] The feature creates these parts, named with `setProperty(... PropertyType.NAME ...)`:
   - `SPACE`: the box minus the 8 through-bores.
   - `KEEP_FIX_1..4`, `KEEP_LOAD_1..2`, `KEEP_PASSIVE_1..2`: solid Ø12 × T cylinders, coaxial with the bores. They overlap `SPACE`, which is fine in a Part Studio.
-- [ ] **Josh:** paste the feature into a Feature Studio, instance it in a Part Studio, and record the document/workspace/element IDs in `config/onshape.yaml`.
+- [x] Feature written to the working document via the Onshape MCP (Feature Studio `TopoTestBeam`); Josh instanced it in Part Studio 1. IDs are in `config/onshape.yaml`.
 
 Every run uses the same geometry, so no configurations or output-set switches are needed. The exporter selects parts by name.
 
 **Export (`onshape_export.py`).** Look up part IDs by name, then export:
 
-- [ ] STEP of `SPACE` only (the FE geometry).
-- [ ] Fine STL of `SPACE`.
-- [ ] Fine STL of all `KEEP_*` parts.
-- [ ] Reuse Josh's existing Onshape REST client if convenient. Check the current endpoint and parameter names *(verify)*: STL `chordTolerance` / `angleTolerance` / `units`, and STEP via the translations endpoint.
+- [x] STEP of `SPACE` only (the FE geometry).
+- [x] Fine STL of `SPACE`.
+- [x] Fine STL of all `KEEP_*` parts.
+- [x] Reuse Josh's existing Onshape REST client if convenient. Check the current endpoint and parameter names *(verify)*: STL `chordTolerance` / `angleTolerance` / `units`, and STEP via the translations endpoint.
 
 **Checks (`geometry_check.py`).** All must pass before anything downstream runs:
 
-- [ ] `SPACE` volume = L·H·T − 8·π·r²·T, within ±0.1%.
-- [ ] Bounding boxes match the envelope.
-- [ ] Cylinder fits on the `SPACE` bores match the Section 4 coordinates to ≤ 0.01 mm.
-- [ ] Each keep cylinder is coaxial with its bore.
-- [ ] All STLs are watertight volumes.
-- [ ] `keep.stl` is written as the union of the `KEEP_*` parts, as one manifold.
+- [x] `SPACE` volume = L·H·T − 8·π·r²·T, within ±0.1%.
+- [x] Bounding boxes match the envelope.
+- [x] Cylinder fits on the `SPACE` bores match the Section 4 coordinates to ≤ 0.01 mm.
+- [x] Each keep cylinder is coaxial with its bore.
+- [x] All STLs are watertight volumes.
+- [x] `keep.stl` is written as the union of the `KEEP_*` parts, as one manifold.
 
 **Gate 1:** Josh reviews the feature in the Onshape GUI (shape, names, any errors) along with the `geometry_check` output.
 
@@ -214,26 +214,26 @@ The goal is to validate the measuring tools before they measure anything real.
 
 **Code to build.**
 
-- [ ] `rebuild.py` and `measure.py`, per Sections 8 and 9.
-- [ ] `synth.py`: synthetic `opt` meshes built from `space` (or from a procedural stand-in if Phase 1 isn't finished):
+- [x] `rebuild.py` and `measure.py`, per Sections 8 and 9.
+- [x] `synth.py`: synthetic `opt` meshes built from `space` (or from a procedural stand-in if Phase 1 isn't finished):
   - Start from a beam with chunky lightening holes, at about 60% volume.
   - Voxelize at 4 mm, run marching cubes, then apply Taubin smoothing, to mimic a coarse export.
 
 **Planted defects.** Plant each one on its own and in combination:
 
-- [ ] **(a)** Undersized, faceted bores.
-- [ ] **(b)** An outward bulge past a side face.
-- [ ] **(c)** A necked seam next to a FIX keep zone.
-- [ ] **(d)** The PASSIVE region detached as an island.
-- [ ] **(e)** A non-watertight `opt`.
+- [x] **(a)** Undersized, faceted bores.
+- [x] **(b)** An outward bulge past a side face.
+- [x] **(c)** A necked seam next to a FIX keep zone.
+- [x] **(d)** The PASSIVE region detached as an island.
+- [x] **(e)** A non-watertight `opt`.
 
 **Pytest acceptance.** Each metric must flag exactly what was planted:
 
-- [ ] (a) and (b) are removed by the rebuild, and the bore and seat metrics pass afterwards.
-- [ ] (c) shows up as a dip in the seam profile.
-- [ ] (d) is split off to `islands.stl` and PASSIVE is reported as detached, without failing the run.
-- [ ] Separating FIX from LOAD is a hard fail.
-- [ ] (e) fails loudly at the input check with a clear message. No silent repair; any repair policy added later must be logged.
+- [x] (a) and (b) are removed by the rebuild, and the bore and seat metrics pass afterwards.
+- [x] (c) shows up as a dip in the seam profile.
+- [x] (d) is split off to `islands.stl` and PASSIVE is reported as detached, without failing the run.
+- [x] Separating FIX from LOAD is a hard fail.
+- [x] (e) fails loudly at the input check with a clear message. No silent repair; any repair policy added later must be logged.
 
 ### Phase 3 — Smoke test
 
@@ -378,3 +378,30 @@ bodies = final.split(only_watertight=False)   # then classify via keep-wall prob
 - Smoothing STL path is read-only (forum thread): https://discuss.ansys.com/discussion/2633/export-stl-file-to-specific-location
 - trimesh booleans: https://trimesh.org/trimesh.boolean.html
 - Manifold: https://github.com/elalish/manifold
+
+## 13. Progress log and handoff notes
+
+**2026-10-15 — Phases 1–2 done, Gate 1 passed.** Commits `1fd9606`, `30dd950`, `f1fb8c1` on `main`.
+
+Environment:
+- Venv: `.venv`, Python 3.12.14 via `uv` (system Python is 3.14; pythonnet/tetgen/manifold3d not reliable there). `uv pip install --python .venv -e ".[dev]"`.
+- Ansys installed: 2026 R1 (`v261`, `AWP_ROOT261`) and 2024 R2 (`v242`). PyMechanical 0.13.4 and PyMAPDL 0.74.1 import cleanly but have **not** been connected to Ansys yet.
+- Onshape: `skildai.onshape.com`. API keys are user-level env vars `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY`. The Onshape MCP server is authenticated for FeatureScript work (consumes the enterprise API allocation).
+- `geometry/` holds the verified Onshape export (`space.step`, `space.stl`, `keep_parts/`, `keep.stl`; gitignored). Re-create with `python -m pipeline.onshape_export && python -m pipeline.geometry_check`.
+
+Resolved *(verify)* items:
+- Onshape STL export: `angleTolerance` is **radians**; `chordTolerance` is in the **output units (mm)**, not metres. A too-fine chord (1e-5) returns HTTP 200 with an empty body. Downloads redirect to a regional host (`cad-usw2.onshape.com`).
+- Live FeatureScript library version 3095.
+
+Implementation choices made in Phase 2 (details, not Section 3 decisions):
+- Bore fit samples points on the facets in the bore band, not vertices: STL cylinders only have vertices on the two faces, which the y-margin excludes.
+- Inside-space input check uses signed distance with a 1 mm tolerance (`rebuild.inside_space_tolerance`) instead of `contains()`, which is ambiguous for vertices lying on `space`'s faces.
+- Synthetic coarse `opt` uses manifold's marching tetrahedra on the 4 mm sampled SDF (skimage marching cubes gave non-manifold edges on thin members).
+- Seam neck = two-sided valley in shell cross-section area vs radius; flagged when the dip > 25%.
+- Bores/seats of a detached PASSIVE zone are reported as `detached` and excluded from pass/fail.
+- Sub-1e-4 mm sliver edges are collapsed when leaving manifold, because float32 STL round trips otherwise break watertightness; `rebuild` verifies `final.stl` reloads as a closed volume.
+
+Phase 3 starting points:
+- Still to write: `pipeline/run_mechanical.py`, `pipeline/validate.py`, `config/runs/` overrides, `results/smoke_test.md`.
+- Use Ansys 2026 R1 (v261) unless there is a reason to prefer v242; record the version in every run.
+- `measure.py` needs `--h`; `rebuild.py`/`measure.py` CLIs read `runs/<id>/opt.stl` and `geometry/`.
