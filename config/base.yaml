@@ -1,0 +1,97 @@
+# All study parameters (plan Section 4). Units: mm, N, MPa, tonne/mm^3 where noted.
+# Scripts must read every dimension, position, and mesh size from here.
+
+beam:
+  length: 200.0        # X, root face at x = 0
+  height: 60.0         # Z, load acts in -Z
+  thickness: 15.0      # Y, bore axes parallel to Y
+
+bore:
+  diameter: 4.5        # M4 clearance, through
+keep:
+  diameter: 12.0       # solid full-thickness cylinder, coaxial with each bore
+washer:
+  diameter: 9.0        # seat-flatness footprint, both faces
+
+# Bore centres (x, z). Bore axes run along Y through the full thickness.
+zones:
+  FIX:
+    bc: fixed
+    bores: [[10, 20], [30, 20], [10, 40], [30, 40]]
+  LOAD:
+    bc: remote_force
+    bores: [[190, 20], [190, 40]]
+  PASSIVE:
+    bc: none
+    bores: [[90, 10], [110, 10]]
+
+material:            # placeholder, PETG-like
+  name: PETG_placeholder
+  youngs_modulus: 2000.0      # MPa
+  poisson_ratio: 0.35
+  density: 1270.0             # kg/m^3
+
+loads:
+  remote_force:
+    magnitude: 200.0          # N
+    direction: [0, 0, -1]
+    behavior: deformable
+
+topology_optimization:
+  method: level_set
+  objective: minimize_compliance
+  retain_volume_fraction: 0.60
+  min_member_size: null
+  manufacturing_constraints: []
+  exclusion:
+    thickness_manual: 3.75    # mm, = (keep - bore) / 2
+    extension: isotropic
+
+mesh:
+  sizes: [4.0, 2.0, 1.0]      # h sweep; reference may relax to 1.5
+  reference_fallback: 1.5
+  element_shape: tet
+  element_order: program_controlled   # keep identical across runs
+  capture_curvature: false
+  capture_proximity: false
+
+onshape_export:
+  stl_chord_tolerance: 0.01   # mm
+  stl_angle_tolerance: 2.0    # deg
+  units: millimeter
+
+rebuild:
+  opt_space_volume_ratio: [0.3, 1.0]
+  inside_space_min_fraction: 0.9
+  inside_space_subsample: 20  # every Nth opt vertex
+  inside_space_tolerance: 1.0 # mm; opt vertices may sit on (or bulge slightly past) space's faces
+
+measure:
+  bore_fidelity_tol: 0.02     # mm
+  seat_flatness_tol: 0.02     # mm
+  bore_band_inner_factor: 0.5 # x r
+  bore_band_outer_offset: 1.5 # mm beyond r
+  bore_band_y_margin: 0.5     # mm from each face
+  bore_min_vertices: 30
+  seat_grid_step: 0.25        # mm
+  seam_shell_step: 0.5        # mm
+  seam_dip_flag: 0.25         # fractional dip
+  specific_stiffness_tol: 0.10
+
+validate:
+  global_size: 1.5
+  bore_size: 0.4
+  convergence_tol: 0.01
+  fix_radial_tol: 0.05
+  pilot: [190.0, 7.5, 30.0]
+  exclude_near_features: 2.0  # mm, member von Mises excludes this band
+  seam_sample_offset: 1.0     # mm
+
+synth:                        # Phase 2 synthetic opt meshes (not used by real runs)
+  voxel_pitch: 4.0            # mimic h = 4
+  taubin_iterations: 10
+  chord: 6.0                  # top/bottom chord depth
+  web_width: 6.0              # Warren diagonal width
+  panels: 3
+  web_x_range: [44.0, 180.0]  # lightening holes between root block and tip block
+  boss_margin: 3.0            # solid boss radius = R + this, around every bore

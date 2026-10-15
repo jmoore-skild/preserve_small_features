@@ -1,0 +1,20 @@
+# Onshape document holding the TopoTestBeam Part Studio. IDs only; no secrets.
+# API keys come from the environment: ONSHAPE_ACCESS_KEY, ONSHAPE_SECRET_KEY.
+# The IDs are in the Part Studio URL: https://cad.onshape.com/documents/<did>/w/<wid>/e/<eid>
+base_url: https://cad.onshape.com
+api_version: v10        # (verify) against the current Onshape API
+document_id: ""         # TODO(Josh)
+workspace_id: ""        # TODO(Josh)
+element_id: ""          # TODO(Josh): the Part Studio, not the Feature Studio
+
+# Query parameters for the per-part STL export, passed through verbatim. (verify) names and units
+# in the API Explorer. Best guess: angle in radians, chord in metres. geometry_check measures the
+# actual bore tessellation against base.yaml's onshape_export tolerances, so a wrong guess fails
+# loudly there rather than silently.
+stl_params:
+  mode: binary
+  grouping: true
+  units: millimeter
+  scale: 1
+  angleTolerance: 0.0349066   # 2 deg
+  chordTolerance: 0.00001     # 0.01 mm in metres

@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated artifacts
+geometry/*.step
+geometry/*.stl
+runs/*/
+!runs/.gitkeep
+results/*.png
+
+# Ansys scratch
+*.mechdat.lock
+*_files/
+*.egg-info/
+geometry/keep_parts/
+geometry/*.json
