@@ -455,3 +455,10 @@ Phase 4 setup:
 - The h = 4 runs are re-run on that setting so wall times are comparable. The 4-core originals are kept in `runs/_h4_4core/`.
 - `scripts/run_matrix.py` chains solve → rebuild → measure → validate per run, and handles M0 → M0R.
 
+
+**2026-10-16 (afternoon) — Phase 4 batch 1 done** (`scripts.run_matrix M3_h4 M3_h2 M0_h4 M3_h4_X2 M0_h2`, every step ok):
+- **Fidelity (main objective):** every rebuilt run (M3, M0R, X2, at h = 4 and 2) has bore radius error ≤ 0.0002 mm, seat deviation 0, no misses, FIX–LOAD connected, both PASSIVE attached, and no seam flags. Raw M0 misses badly: at h = 4, 0.62 mm bore error, 11.3 mm seat deviation and 92 misses; at h = 2, 0.10 mm, 3.9 mm and 0 misses.
+- **Specific stiffness (N/mm/kg):** M3 1 463 (h4) and 1 616 (h2); M0R 1 227 and 1 576; X2 1 243. Model-form gap: M3 +9.9 % at h = 4, +1.3 % at h = 2.
+- **X2 (8 mm exclusion) hurts:** it stops after 3 iterations, like M0, and gives 15 % lower specific stiffness than M3_h4. 3.75 mm holds below one element.
+- **Cores don't change results:** M3_h4 on 24 cores is within 0.14 % of the 4-core run.
+- **Timing probe:** M3_h2 has 80 242 elements, a 211 s TO solve and 18 iterations, on 24 cores with 1.7 GB of MAPDL memory. Projected h = 1: about 640 k elements, roughly 20–40 min and about 14 GB, so the h = 1 reference is affordable. **Reference = h = 1** (`M3_h1`), started 2026-10-16.
