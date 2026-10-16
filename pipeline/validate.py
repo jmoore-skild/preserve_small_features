@@ -95,12 +95,39 @@ def fe_surface(opt, keep, space, cfg: dict, global_size: float, bore_size: float
 def tet_mesh(surface: trimesh.Trimesh, cfg: dict, global_size: float) -> pv.UnstructuredGrid:
     """Quadratic tets (TetGen): sizes grade in from the surface triangulation, with tet volume capped at
     tet_volume_cap * global_size^3. The cap goes in as a raw switch string: this tetgen build ignores the
-    maxvolume keyword, and segfaults when given a background sizing mesh."""
+    maxvolume keyword, and segfaults when given a background sizing mesh.
+
+    TetGen runs in a child process killed after tet_timeout seconds: on some remeshes it never returns
+    (once 74 min on the full SPACE body). A timeout or crash raises RuntimeError, like a TetGen failure,
+    so the caller retries on a fresh remesh."""
+    import multiprocessing as mp
+
     vc = cfg["validate"]
-    faces = np.hstack([np.full((len(surface.faces), 1), 3), surface.faces]).ravel()
-    tet = tetgen.TetGen(pv.PolyData(np.asarray(surface.vertices), faces))
-    tet.tetrahedralize(switches=f"pq{vc['tet_radius_edge']}a{vc['tet_volume_cap'] * global_size ** 3:.6g}o2Q")
-    return tet.grid
+    switches = f"pq{vc['tet_radius_edge']}a{vc['tet_volume_cap'] * global_size ** 3:.6g}o2Q"
+    with tempfile.TemporaryDirectory(prefix="tetgen_") as tmp:
+        src, dst = Path(tmp) / "surface.npz", Path(tmp) / "grid.npz"
+        np.savez(src, vertices=np.asarray(surface.vertices), faces=np.asarray(surface.faces))
+        proc = mp.get_context("spawn").Process(target=_tet_mesh_child, args=(str(src), str(dst), switches))
+        proc.start()
+        proc.join(vc["tet_timeout"])
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+            raise RuntimeError(f"TetGen timed out after {vc['tet_timeout']} s")
+        if proc.exitcode != 0 or not dst.exists():
+            raise RuntimeError(f"TetGen child exited with code {proc.exitcode}")
+        with np.load(dst) as d:
+            return pv.UnstructuredGrid(d["cells"], d["celltypes"], d["points"])
+
+
+def _tet_mesh_child(src: str, dst: str, switches: str) -> None:
+    """tet_mesh's child process: surface arrays in, grid arrays out (npz, no VTK file I/O)."""
+    with np.load(src) as d:
+        v, f = d["vertices"], d["faces"]
+    tet = tetgen.TetGen(pv.PolyData(v, np.hstack([np.full((len(f), 1), 3), f]).ravel()))
+    tet.tetrahedralize(switches=switches)
+    g = tet.grid
+    np.savez(dst, cells=np.asarray(g.cells), celltypes=np.asarray(g.celltypes), points=np.asarray(g.points))
 
 
 # --------------------------------------------------------------------------- solve

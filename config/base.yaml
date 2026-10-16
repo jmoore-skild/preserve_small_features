@@ -92,6 +92,7 @@ validate:
   remesh_iterations: 10
   tet_radius_edge: 2.0        # TetGen -q bound; 1.5 cascades from the seam slivers
   tet_volume_cap: 0.3         # x global_size^3, TetGen -a
+  tet_timeout: 900            # s, TetGen child process is killed and the level retried on a fresh remesh
   convergence_tol: 0.01
   fix_radial_tol: 0.05
   pilot: [190.0, 7.5, 30.0]
