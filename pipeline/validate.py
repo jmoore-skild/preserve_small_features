@@ -296,13 +296,36 @@ def validate(make_surface, reference: trimesh.Trimesh, cfg: dict, mapdl, work: P
     }
 
 
+def launch(cfg: dict, work: Path, nprocs: list[int] | None = None):
+    """(mapdl, nproc): MAPDL started with the first process count in `nprocs` (default validate.nproc)
+    whose licenses are granted. Above 4 cores each step needs another HPC pack from the shared pool; a
+    denied checkout kills MAPDL at startup, which launch_mapdl reports as a LaunchError after its
+    connection timeout."""
+    from ansys.mapdl.core import launch_mapdl
+    from ansys.mapdl.core.launcher.errors import LaunchError
+
+    errors = []
+    for n in nprocs or cfg["validate"]["nproc"]:
+        try:
+            mapdl = launch_mapdl(version=cfg["mechanical"]["version"], nproc=n, run_location=str(work),
+                                 override=True)
+        except LaunchError as e:
+            errors.append(f"{n}: {e}")
+            print(f"MAPDL with {n} processes failed to start (HPC licenses not granted?), trying fewer",
+                  flush=True)
+            continue
+        print(f"MAPDL started with {n} processes", flush=True)
+        return mapdl, n
+    raise LaunchError(f"MAPDL failed to start at every process count: {errors}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-dir", required=True, type=Path)
     ap.add_argument("--geometry-dir", default=Path("geometry"), type=Path)
     ap.add_argument("--raw", action="store_true", help="validate opt.stl as-is (raw M0), not the rebuild")
     ap.add_argument("--config", action="append", default=[])
-    ap.add_argument("--nproc", type=int, default=4)
+    ap.add_argument("--nproc", type=int, help="MAPDL processes (default: try each of validate.nproc)")
     a = ap.parse_args(argv)
     cfg = load_config(*a.config)
     opt = geom.load_mesh(a.run_dir / "opt.stl")
@@ -316,10 +339,8 @@ def main(argv=None) -> int:
         make_surface = lambda g, b: fe_surface(opt, keep, space, cfg, g, b)  # noqa: E731
     out = a.run_dir / ("validation_raw.json" if a.raw else "validation.json")
 
-    from ansys.mapdl.core import launch_mapdl
     work = Path(tempfile.mkdtemp(prefix="validate_"))
-    mapdl = launch_mapdl(version=cfg["mechanical"]["version"], nproc=a.nproc, run_location=str(work),
-                         override=True)
+    mapdl, nproc = launch(cfg, work, [a.nproc] if a.nproc else None)
     try:
         report = validate(make_surface, reference, cfg, mapdl, work)
     except ValueError as e:
@@ -328,7 +349,7 @@ def main(argv=None) -> int:
         report_version = str(mapdl.version)
         mapdl.exit()
         shutil.rmtree(work, ignore_errors=True)
-    report.update(mesh=mesh_name, ansys_version=report_version)
+    report.update(mesh=mesh_name, ansys_version=report_version, nproc=nproc)
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps({k: report.get(k) for k in ("status", "reason", "converged", "pilot_uz", "compliance",
                                                  "strain_energy", "mass", "specific_stiffness")}, indent=2))

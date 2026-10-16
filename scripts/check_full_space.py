@@ -6,11 +6,9 @@ import json
 import tempfile
 from pathlib import Path
 
-from ansys.mapdl.core import launch_mapdl
-
 from pipeline import geom
 from pipeline.config import load_config
-from pipeline.validate import remesh_space, validate
+from pipeline.validate import launch, remesh_space, validate
 
 
 def main() -> None:
@@ -18,12 +16,13 @@ def main() -> None:
     cfg = load_config()
     space = geom.load_mesh("geometry/space.stl")
     work = Path(tempfile.mkdtemp(prefix="validate_"))
-    mapdl = launch_mapdl(version=261, nproc=8, run_location=str(work), override=True)
+    mapdl, nproc = launch(cfg, work)
     try:
         rep = validate(lambda g, b: remesh_space(space, cfg, g, b), space, cfg, mapdl, work)
     finally:
         mapdl.exit()
     mech = json.load(open("runs/M3_h4/mechanical.json"))["static_result"]
+    rep["nproc"] = nproc
     rep["mechanical_full_design_uz_load_bores_avg"] = mech["uz_load_bores_avg"]
     Path("runs/check_full_space").mkdir(parents=True, exist_ok=True)
     Path("runs/check_full_space/validation.json").write_text(json.dumps(rep, indent=2))
