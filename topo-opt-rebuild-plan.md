@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–2 complete; Gate 1 passed 2026-10-15. Next: Phase 3 (smoke test). See Section 13 for handoff notes.
+**Status:** Phases 1–2 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) mostly done: both h = 4 runs solved, rebuilt and measured, and M3_h4 validated. Still open: M0R_h4 validation, the BC-equivalence check and a TetGen hang guard, then Gate 2. See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -239,17 +239,17 @@ The goal is to validate the measuring tools before they measure anything real.
 
 **Mechanical run.** Run `run_mechanical.py` end to end for `M3_h4` and `M0_h4`:
 
-- [ ] Import the STEP and assign the material.
-- [ ] Mesh uniformly.
-- [ ] Create worksheet named selections for the bores.
-- [ ] Set up the static analysis and BCs.
-- [ ] Add a linked Structural Optimization (level-set) with design region = `SPACE`, the method's exclusion, the objective, and the response constraint.
-- [ ] Solve, export the STL, and save the `.mechdat`.
-- [ ] Write run metadata: element count, iterations, wall time, final volume, and final compliance if it can be retrieved.
+- [x] Import the STEP and assign the material.
+- [x] Mesh uniformly.
+- [x] Create worksheet named selections for the bores.
+- [x] Set up the static analysis and BCs.
+- [x] Add a linked Structural Optimization (level-set) with design region = `SPACE`, the method's exclusion, the objective, and the response constraint.
+- [x] Solve, export the STL, and save the `.mechdat`.
+- [x] Write run metadata: element count, iterations, wall time, final volume, and final compliance if it can be retrieved.
 
 **Post-processing.**
 
-- [ ] Run `rebuild` + `measure` + `validate` on both runs.
+- [x] Run `rebuild` + `measure` + `validate` on both runs.
 - [ ] If the settings don't change after Gate 2, these two runs count toward the matrix.
 
 **Questions to answer.** Record the answers in `results/smoke_test.md`:
@@ -405,3 +405,36 @@ Phase 3 starting points:
 - Still to write: `pipeline/run_mechanical.py`, `pipeline/validate.py`, `config/runs/` overrides, `results/smoke_test.md`.
 - Use Ansys 2026 R1 (v261) unless there is a reason to prefer v242; record the version in every run.
 - `measure.py` needs `--h`; `rebuild.py`/`measure.py` CLIs read `runs/<id>/opt.stl` and `geometry/`.
+
+**2026-10-15 (evening) — Phase 3 mostly done; Gate 2 not yet reached.** Draft results are in `results/smoke_test.md`, which answers Q1–Q10.
+
+Working:
+- `pipeline/run_mechanical.py` runs embedded PyMechanical end to end on v261 (run configs in `config/runs/`). Both `M3_h4` and `M0_h4` solved (TO ≈ 40 s each).
+- Rebuild and measure pass on `M3_h4` and `M0R_h4`.
+- `pipeline/validate.py` validated `M3_h4` and converged (0.31 %). Model-form gap +9.8 %.
+
+Key facts learned (details in `smoke_test.md`):
+- **Embedded Mechanical needs Ansys's `libcrypto-3-x64.dll` preloaded** before Python's, or it exits with "legacy Provider loading failed". `run_mechanical.preload_ansys_openssl` handles this.
+- **Level-set STL** comes from `TopologyDensity.AddSmoothing()` (Move Limit 0 means no smoothing); it is watertight, in mm, in the CAD frame. The h = 4 level-set closes all the bores.
+- **The optimizer's "compliance" is strain energy (½F·u).** Excluded volume counts toward the 60 %. Both runs stopped below 60 % (59.2 % / 57.0 %) after rejected iterations, a Gate 2 question.
+- **Exclusion Thickness 3.75 mm is honored only approximately** at h = 4 (89–98 % of each keep annulus filled). The rebuild restores the rest.
+- **Smart App Control blocks VTK's `vtkFiltersVerdict` DLL** on Josh's machine, so avoid pyvista cell filters (quality, sizes, probe, `.volume`). Josh chose to keep Smart App Control on.
+
+Validation tooling (deviates from the plan's TetGen-only route):
+- The FE surface is `(opt ∪ keep) ∩ remeshed(space)`, using a pymeshlab isotropic remesh of SPACE only. Onshape's flat-face sliver fans exploded TetGen.
+- Remeshing `opt` or `final` self-intersects in thin members.
+- TetGen 0.8.4 ignores the `maxvolume` keyword (so a raw switch string is used) and segfaults with a bgmesh.
+- gmsh's STL reparametrization failed or self-intersected, so it isn't used.
+- pymeshlab output varies between calls, so there are retries.
+- `ansys.mapdl.reader.save_as_archive` needs explicit `ansys_*` cell arrays, or it numbers the material per cell.
+
+Next session (in order):
+1. Guard TetGen against hangs: run `tet_mesh` in a child process with a timeout and retry on a fresh remesh. The full-body check hung 74 min inside TetGen and was stopped; there's no partial result.
+2. `python -m scripts.check_full_space`: BC equivalence (validate the full body vs Mechanical's −0.7526 mm).
+3. `python -m pipeline.validate --run-dir runs/M0R_h4` (about 25 min).
+4. Finish `results/smoke_test.md`, then stop at **Gate 2** for Josh. Recommendations to put to him there:
+   - test one tightened convergence setting at h = 4;
+   - run `M3_h2` as the timing probe for h = 1 vs 1.5;
+   - X2 looks informative.
+
+Run artifacts (`runs/M3_h4`, `runs/M0_h4`, `runs/M0R_h4`) are local only (gitignored). Regenerate them with the commands at the end of `smoke_test.md`.

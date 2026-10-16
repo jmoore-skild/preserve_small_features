@@ -30,6 +30,7 @@ material:            # placeholder, PETG-like
   youngs_modulus: 2000.0      # MPa
   poisson_ratio: 0.35
   density: 1270.0             # kg/m^3
+  template: Polyethylene      # Ansys General_Materials.xml entry cloned for the MatML; E/nu/rho overwritten
 
 loads:
   remote_force:
@@ -46,6 +47,10 @@ topology_optimization:
   exclusion:
     thickness_manual: 3.75    # mm, = (keep - bore) / 2
     extension: isotropic
+  export_smoothing_move_limit: 0.0   # level-set default: no smoothing, export the level-set surface as is
+
+mechanical:
+  version: 261                # Ansys 2026 R1; recorded in every run
 
 mesh:
   sizes: [4.0, 2.0, 1.0]      # h sweep; reference may relax to 1.5
@@ -81,11 +86,18 @@ measure:
 validate:
   global_size: 1.5
   bore_size: 0.4
+  bore_refine_radius_factor: 1.5  # x keep radius: surface remeshed at bore_size within this of each axis
+  feature_angle: 30.0         # deg, edges kept sharp by the remesher
+  surface_tolerance: 0.005    # mm, max remesh deviation from final.stl
+  remesh_iterations: 10
+  tet_radius_edge: 2.0        # TetGen -q bound; 1.5 cascades from the seam slivers
+  tet_volume_cap: 0.3         # x global_size^3, TetGen -a
   convergence_tol: 0.01
   fix_radial_tol: 0.05
   pilot: [190.0, 7.5, 30.0]
   exclude_near_features: 2.0  # mm, member von Mises excludes this band
   seam_sample_offset: 1.0     # mm
+  seam_shell_halfwidth: 0.25  # mm, nodes within this of the seam offset radius
 
 synth:                        # Phase 2 synthetic opt meshes (not used by real runs)
   voxel_pitch: 4.0            # mimic h = 4
