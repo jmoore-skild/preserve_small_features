@@ -51,6 +51,7 @@ topology_optimization:
 
 mechanical:
   version: 261                # Ansys 2026 R1; recorded in every run
+  nproc: [24, 12, 4]          # TO solve cores, tried in order until the HPC packs are granted (as validate.nproc)
 
 mesh:
   sizes: [4.0, 2.0, 1.0]      # h sweep; reference may relax to 1.5

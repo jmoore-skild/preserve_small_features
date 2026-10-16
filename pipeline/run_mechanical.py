@@ -120,6 +120,19 @@ class Model:
     def q(self, value: float, unit: str = "mm"):
         return self.Quantity(value, unit)
 
+    def solve(self, solution, nprocs: list[int]) -> int:
+        """Solve on the first core count in `nprocs` that finishes; returns it. Above 4 cores each step needs
+        another HPC pack from the shared pool, and a denied checkout stops the solver at startup."""
+        settings = self.ExtAPI.Application.SolveConfigurations["My Computer"].SolveProcessSettings
+        for n in nprocs:
+            settings.MaxNumberOfCores = n
+            solution.Solve(True)
+            if solution.Status == self.SolutionStatusType.Done:
+                return n
+            print(f"Mechanical solve on {n} cores did not finish ({solution.Status}), trying fewer", flush=True)
+            solution.ClearGeneratedData()
+        raise RuntimeError(f"Mechanical solve failed at every core count {nprocs}")
+
     def import_geometry(self, step: Path):
         self.ExtAPI.Application.ActiveUnitSystem = self.MechanicalUnitSystem.StandardNMM
         gi = self.m.GeometryImportGroup.AddGeometryImport()
@@ -308,11 +321,12 @@ def run(run_id: str, solve: bool = True) -> dict:
     meta["topology_setup"] = model.topology(rc["method"], ns_all)
 
     if solve:
-        timed("solve_static", model.static_analysis.Solution.Solve, True)
+        nprocs = cfg["mechanical"]["nproc"]
+        meta["cores"] = {"static": timed("solve_static", model.solve, model.static_analysis.Solution, nprocs)}
         uz = model.static_uz
         meta["static_result"] = {"uz_load_bores_avg": uz.Average.Value, "uz_load_bores_min": uz.Minimum.Value,
                                  "uz_load_bores_max": uz.Maximum.Value}
-        timed("solve_topology", model.topo.Solution.Solve, True)
+        meta["cores"]["topology"] = timed("solve_topology", model.solve, model.topo.Solution, nprocs)
         meta["solution"] = props(model.topo.Solution)
         solver_dir = Path(model.topo.WorkingDir)
         shutil.copytree(solver_dir, out / "solver_topo", dirs_exist_ok=True)

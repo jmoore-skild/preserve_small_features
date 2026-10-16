@@ -1,6 +1,6 @@
 # Phase 3 smoke test: `M3_h4` and `M0_h4`
 
-**Status: ready for Gate 2.** All Phase 3 runs are validated, and the BC-equivalence check passes.
+**Status: final.** Gate 2 passed on 2026-10-16. Decisions are in the plan, Section 13: early stops accepted; small-feature preservation is the main objective, with stiffness per mass secondary; `M3_h2` first; X2 added; stresses indicative only.
 **Date:** 2026-10-15/16. **Ansys:** 2026 R1 (v261), Mechanical Enterprise (shared web licence), embedded PyMechanical 0.13.4; validation meshed in Ansys Prime 2026 R1 via PyPrimeMesh 0.10.5 and solved in MAPDL 2026 R1 via PyMAPDL 0.74.1.
 **Run artifacts:** `runs/M3_h4`, `runs/M0_h4` (raw), `runs/M0R_h4` (post-only rebuild of `M0_h4/opt.stl`). Not committed; regenerate with the commands at the end.
 

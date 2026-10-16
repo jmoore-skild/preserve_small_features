@@ -24,7 +24,8 @@ Python 3.12 is pinned: PyMechanical's pythonnet and the manifold3d wheels are no
 | Metrics (rebuilt runs) | `python -m pipeline.measure --run-dir runs/<id> --h 4` |
 | Metrics (raw M0, report-only) | `python -m pipeline.measure --run-dir runs/<id> --h 4 --raw` |
 | TO run in Mechanical (embedded, Ansys 2026 R1; reads `config/runs/<id>.yaml`) | `python -m pipeline.run_mechanical --run M3_h4` |
-| Validation solve, PyMAPDL (rebuilt runs; ~25 min at h = 4) | `python -m pipeline.validate --run-dir runs/<id>` |
+| Validation: Prime mesh + PyMAPDL solve (rebuilt runs; ~10 min at h = 4) | `python -m pipeline.validate --run-dir runs/<id>` |
+| Whole chain per run (solve → rebuild → measure → validate; M0 → M0R) | `python -m scripts.run_matrix M3_h2 M0_h2` |
 | Tests | `pytest` |
 
 M0R runs are post-only: copy `runs/M0_h<h>/opt.stl` into `runs/M0R_h<h>/`, then rebuild, measure and validate.

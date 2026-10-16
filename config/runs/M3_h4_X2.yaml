@@ -1,0 +1,7 @@
+run:
+  id: M3_h4_X2
+  method: M3
+  h: 4.0
+topology_optimization:
+  exclusion:
+    thickness_manual: 8.0     # X2: Ansys's 2h default at h = 4; post-processing keep stays 12 mm

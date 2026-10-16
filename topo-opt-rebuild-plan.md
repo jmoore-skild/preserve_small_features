@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. **Waiting at Gate 2** for Josh's review of `results/smoke_test.md`. See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16; Phase 4 (run matrix) in progress. See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -441,4 +441,17 @@ Run artifacts (`runs/M3_h4`, `runs/M0_h4`, `runs/M0R_h4`) are local only (gitign
 - **Stresses are not mesh-converged:** M3's member peak is 56 vs 32 MPa between meshers. This is a Gate 2 decision.
 
 Gate 2 questions for Josh (details in `smoke_test.md`): the premature volume stop (Q7), normalization by mass, h = 1 vs 1.5 (run `M3_h2` first), extras (X2), and how to treat stresses.
+
+**2026-10-16 — Gate 2 passed. Josh's decisions:**
+
+1. **Early volume stops are acceptable.** Convergence settings stay unchanged.
+2. **Normalize by stiffness per unit mass**, but it is a secondary metric. **The main objective is preserving the small features**: bore and seat fidelity, connectivity, and seams (Section 2, Q1–Q2). Payoff (Q3) is supporting evidence, so REPORT.md should lead with fidelity.
+3. **Run `M3_h2` first as the timing probe**, then choose h = 1 or 1.5 for the reference.
+4. **Run extra X2** (`M3_h4_X2`, Exclusion Thickness 8 mm).
+5. **Stresses are indicative only.** No stress pass/fail and no stress convergence check.
+
+Phase 4 setup:
+- TO solves now also try 24, 12, then 4 cores (`mechanical.nproc`), and record the cores used in `mechanical.json`.
+- The h = 4 runs are re-run on that setting so wall times are comparable. The 4-core originals are kept in `runs/_h4_4core/`.
+- `scripts/run_matrix.py` chains solve → rebuild → measure → validate per run, and handles M0 → M0R.
 
