@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–2 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) mostly done: both h = 4 runs solved, rebuilt and measured, and M3_h4 validated. Still open: M0R_h4 validation, the BC-equivalence check and a TetGen hang guard, then Gate 2. See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. **Waiting at Gate 2** for Josh's review of `results/smoke_test.md`. See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -168,10 +168,9 @@ topo-rebuild-eval/
 **Dependencies:**
 
 - Ansys: `ansys-mechanical-core`, `ansys-mapdl-core`.
-- Geometry: `trimesh`, `manifold3d`, `rtree`, `tetgen`, `pyvista`.
+- Geometry: `trimesh`, `manifold3d`, `rtree`.
+- Validation meshing: `ansys-meshing-prime` (PyPrimeMesh, matched to the Ansys release). It writes the CDB that MAPDL reads. TetGen and gmsh were tried and dropped in Phase 3 (see Section 13).
 - General: `numpy`, `scipy`, `pyyaml`, `pytest`, `matplotlib`.
-- Add `gmsh` if validation needs local refinement near the bores.
-- For writing CDB files, use whatever PyMAPDL currently recommends *(verify)*. `ansys-mapdl-reader`'s `save_as_archive` is one known route.
 
 ## 7. Phases
 
@@ -428,13 +427,18 @@ Validation tooling (deviates from the plan's TetGen-only route):
 - pymeshlab output varies between calls, so there are retries.
 - `ansys.mapdl.reader.save_as_archive` needs explicit `ansys_*` cell arrays, or it numbers the material per cell.
 
-Next session (in order):
-1. Guard TetGen against hangs: run `tet_mesh` in a child process with a timeout and retry on a fresh remesh. The full-body check hung 74 min inside TetGen and was stopped; there's no partial result.
-2. `python -m scripts.check_full_space`: BC equivalence (validate the full body vs Mechanical's −0.7526 mm).
-3. `python -m pipeline.validate --run-dir runs/M0R_h4` (about 25 min).
-4. Finish `results/smoke_test.md`, then stop at **Gate 2** for Josh. Recommendations to put to him there:
-   - test one tightened convergence setting at h = 4;
-   - run `M3_h2` as the timing probe for h = 1 vs 1.5;
-   - X2 looks informative.
+Next session: superseded by the 2026-10-16 entry below.
 
 Run artifacts (`runs/M3_h4`, `runs/M0_h4`, `runs/M0R_h4`) are local only (gitignored). Regenerate them with the commands at the end of `smoke_test.md`.
+
+**2026-10-16 — Phase 3 done; at Gate 2.** `results/smoke_test.md` is final for Gate 2.
+
+- Validation meshing now goes through the **Ansys Prime wrapper** (PyPrimeMesh 0.10.5), replacing pymeshlab + TetGen. The TetGen hang guard (`360dda9`) worked, but TetGen still failed 5 of 5 attempts on M0R and the full body: the validation surfaces self-intersect (38 faces on M0R) and are full of slivers. TetGen `-Y`, gmsh, and Prime meshing the surface as given all fell short too. `prime_mesh` wraps `final.stl` directly, checks the wrap for self-intersections, meshes quadratic tets, and exports a CDB that MAPDL reads with `CDREAD`. The solver is PCG.
+- **Results:** M3_h4 converged (pilot UZ −1.01468 mm, 0.15 % from the TetGen-based result). M0R_h4 converged (−1.25562 mm). The full-body BC check is within 0.42 % of Mechanical. M3 has 19 % higher specific stiffness than M0R, and its model-form gap is +9.7 %.
+- **Licensing:**
+  - Prime and MAPDL use the same `ansys` seat, and the pool grants one. So each level meshes, closes Prime, then starts MAPDL.
+  - MAPDL tries 24, then 12, then 4 cores (`validate.nproc`). Josh wants as many HPC packs as are free. Two packs were granted on 2026-10-16; on 10-15 only one was.
+- **Stresses are not mesh-converged:** M3's member peak is 56 vs 32 MPa between meshers. This is a Gate 2 decision.
+
+Gate 2 questions for Josh (details in `smoke_test.md`): the premature volume stop (Q7), normalization by mass, h = 1 vs 1.5 (run `M3_h2` first), extras (X2), and how to treat stresses.
+

@@ -86,15 +86,13 @@ measure:
 validate:
   global_size: 1.5
   bore_size: 0.4
-  bore_refine_radius_factor: 1.5  # x keep radius: surface remeshed at bore_size within this of each axis
-  feature_angle: 30.0         # deg, edges kept sharp by the remesher
-  surface_tolerance: 0.005    # mm, max remesh deviation from final.stl
-  remesh_iterations: 10
-  tet_radius_edge: 2.0        # TetGen -q bound; 1.5 cascades from the seam slivers
-  tet_volume_cap: 0.3         # x global_size^3, TetGen -a
+  feature_angle: 30.0         # deg, feature edges the Prime wrapper recovers
+  growth_rate: 1.2            # Prime surface and volume size growth
+  wrap_elements_per_gap: 2    # Prime wrapper proximity sizing: thin members keep at least this many across
   nproc: [24, 12, 4]          # MAPDL DMP processes, tried in order until the licenses are granted: all 24 cores
                               # (base + 2 HPC packs), 12 (1 pack), 4 (base only)
-  tet_timeout: 900            # s, TetGen child process is killed and the level retried on a fresh remesh
+  solver: PCG                 # MAPDL EQSLV; sparse direct went out of core at level 1 (2M tets, 21 min)
+  solver_tol: 1.0e-8
   convergence_tol: 0.01
   fix_radial_tol: 0.05
   pilot: [190.0, 7.5, 30.0]

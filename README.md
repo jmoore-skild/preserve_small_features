@@ -10,7 +10,7 @@ uv pip install --python .venv -e ".[dev]"
 .venv\Scripts\activate
 ```
 
-Python 3.12 is pinned: PyMechanical's pythonnet and the tetgen/manifold3d wheels are not reliable on 3.14 yet.
+Python 3.12 is pinned: PyMechanical's pythonnet and the manifold3d wheels are not reliable on 3.14 yet. Validation meshing uses Ansys Prime through `ansys-meshing-prime`, pinned to the client that matches the installed Ansys release.
 
 ## Commands
 

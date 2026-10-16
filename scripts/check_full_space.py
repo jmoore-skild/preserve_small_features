@@ -3,26 +3,24 @@
     python -m scripts.check_full_space        # from the repo root; writes runs/check_full_space/validation.json
 """
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
 from pipeline import geom
 from pipeline.config import load_config
-from pipeline.validate import launch, remesh_space, validate
+from pipeline.validate import validate
 
 
 def main() -> None:
-    # Guarded: validate.tet_mesh spawns child processes, which re-import this module.
     cfg = load_config()
-    space = geom.load_mesh("geometry/space.stl")
+    stl = Path("geometry/space.stl")
     work = Path(tempfile.mkdtemp(prefix="validate_"))
-    mapdl, nproc = launch(cfg, work)
     try:
-        rep = validate(lambda g, b: remesh_space(space, cfg, g, b), space, cfg, mapdl, work)
+        rep = validate(stl, geom.load_mesh(stl), cfg, work)
     finally:
-        mapdl.exit()
+        shutil.rmtree(work, ignore_errors=True)
     mech = json.load(open("runs/M3_h4/mechanical.json"))["static_result"]
-    rep["nproc"] = nproc
     rep["mechanical_full_design_uz_load_bores_avg"] = mech["uz_load_bores_avg"]
     Path("runs/check_full_space").mkdir(parents=True, exist_ok=True)
     Path("runs/check_full_space/validation.json").write_text(json.dumps(rep, indent=2))

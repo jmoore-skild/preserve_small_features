@@ -1,5 +1,5 @@
-"""Validation solve (plan Section 9): rebuild against a remeshed SPACE, tet-mesh with TetGen, and solve
-a linear static in PyMAPDL.
+"""Validation solve (plan Section 9): Ansys Prime wraps the STL and meshes quadratic tets, and PyMAPDL
+solves a linear static.
 
     python -m pipeline.validate --run-dir runs/M3_h4                 # validates final.stl
     python -m pipeline.validate --run-dir runs/M0_h4 --raw           # raw M0 opt.stl (only if it has bores)
@@ -8,20 +8,23 @@ BCs match the TO model: all DOF fixed on the FIX bore-surface nodes; 200 N in -Z
 LOAD bore centroid, distributed to the LOAD bore-surface nodes by RBE3. Quadratic tets (SOLID187).
 Refines (global and bore size halved) until pilot UZ changes by less than validate.convergence_tol.
 Writes validation.json in the run directory.
+
+Meshing goes through Prime's wrapper because the STLs are hard to mesh as given: Onshape's flat faces are
+sliver fans, and the rebuild's booleans leave slivers and self-intersections in thin members. TetGen, gmsh,
+and Prime meshing the surface as given each crashed, hung, or left near-flat tets on them.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
+import os
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
-import tetgen
 import trimesh
 
 from pipeline import geom
@@ -29,7 +32,6 @@ from pipeline.config import bore_radius, bores, keep_radius, load_config
 from pipeline.run_mechanical import zone_x_range
 
 MAX_LEVELS = 3
-REMESH_ATTEMPTS = 5
 
 
 # --------------------------------------------------------------------------- mesh
@@ -41,133 +43,118 @@ def radial_to_axes(points: np.ndarray, cfg: dict, zone: str | None = None) -> np
     return d.min(axis=1)
 
 
-def remesh_space(space: trimesh.Trimesh, cfg: dict, global_size: float, bore_size: float) -> trimesh.Trimesh:
-    """remesh_space_once with retries: pymeshlab's result varies between calls in one process, and an
-    occasional result self-intersects (caught by the check), so vary the iteration count and retry."""
-    errors = []
-    for attempt in range(REMESH_ATTEMPTS):
-        try:
-            return remesh_space_once(space, cfg, global_size, bore_size, extra_iterations=attempt)
-        except ValueError as e:
-            errors.append(str(e))
-    raise ValueError(f"remeshing SPACE at {global_size}/{bore_size} mm failed: {errors}")
+@dataclass
+class FeMesh:
+    """A Prime CDB and the arrays read back from it. No VTK grid: Smart App Control blocks VTK DLLs here."""
+    cdb: Path
+    points: np.ndarray        # (n, 3); row i is node nnum[i]
+    nnum: np.ndarray
+    tets: np.ndarray          # (e, 4) corner-node rows into points
+    used: np.ndarray          # nodes referenced by an element (Prime also writes unreferenced wrap nodes)
+    materials: np.ndarray
+
+    @property
+    def n_elements(self) -> int:
+        return len(self.tets)
+
+    def volume(self) -> float:
+        """Volume from the corner nodes."""
+        a, b, c, d = (self.points[self.tets[:, i]] for i in range(4))
+        return float(np.abs(np.einsum("ij,ij->i", b - a, np.cross(c - a, d - a))).sum() / 6)
 
 
-def remesh_space_once(space: trimesh.Trimesh, cfg: dict, global_size: float, bore_size: float,
-                      extra_iterations: int = 0) -> trimesh.Trimesh:
-    """Isotropic remesh of SPACE (pymeshlab): global_size everywhere, then bore_size within the refinement
-    radius of each bore axis. Feature edges (box edges, bore rims) are kept and vertices stay within
-    surface_tolerance of the input.
-
-    Onshape's STL triangulates the flat faces as long slivers fanning out from the bore circles, which
-    makes TetGen's quality refinement explode. Only SPACE is remeshed: it has no thin walls, whereas
-    remeshing the level-set result (or final.stl) introduced self-intersections in thin members.
-    """
-    import pymeshlab as ml
-
-    vc = cfg["validate"]
-    ms = ml.MeshSet()
-    ms.add_mesh(ml.Mesh(np.asarray(space.vertices, dtype=np.float64), np.asarray(space.faces)))
-    common = dict(featuredeg=vc["feature_angle"], maxsurfdist=ml.PureValue(vc["surface_tolerance"]),
-                  iterations=vc["remesh_iterations"] + extra_iterations)
-    ms.meshing_isotropic_explicit_remeshing(targetlen=ml.PureValue(global_size), **common)
-    rr = (vc["bore_refine_radius_factor"] * keep_radius(cfg)) ** 2
-    cond = " || ".join(f"((x0-{b.x})^2+(z0-{b.z})^2 < {rr})" for b in bores(cfg))
-    ms.compute_selection_by_condition_per_face(condselect=cond)
-    ms.meshing_isotropic_explicit_remeshing(targetlen=ml.PureValue(bore_size), selectedonly=True, **common)
-    ms.compute_selection_by_self_intersections_per_face()
-    if ms.current_mesh().selected_face_number():
-        raise ValueError(f"remeshed SPACE self-intersects ({ms.current_mesh().selected_face_number()} faces)")
-    m = ms.current_mesh()
-    out = trimesh.Trimesh(m.vertex_matrix(), m.face_matrix(), process=False)
-    if not out.is_volume:
-        raise ValueError("remeshed SPACE is not a closed volume")
-    return out
+def read_cdb(cdb: Path) -> FeMesh:
+    from ansys.mapdl.reader import Archive
+    arch = Archive(str(cdb), parse_vtk=False)
+    elem = np.asarray(arch.elem)                       # 10 header fields (MAT first), then 10 node numbers
+    row = np.zeros(arch.nnum.max() + 1, dtype=np.int64)
+    row[arch.nnum] = np.arange(len(arch.nnum))
+    used = np.zeros(len(arch.nnum), dtype=bool)
+    used[row[elem[:, 10:20].ravel()]] = True
+    return FeMesh(cdb, np.asarray(arch.nodes, dtype=float), np.asarray(arch.nnum), row[elem[:, 10:14]], used,
+                  np.unique(elem[:, 0]))
 
 
-def fe_surface(opt, keep, space, cfg: dict, global_size: float, bore_size: float) -> trimesh.Trimesh:
-    """The validation surface: the same rebuild, (opt ∪ keep) ∩ space, against a remeshed SPACE.
-    Same geometry as final.stl (to surface_tolerance), better-shaped triangles for meshing."""
-    from pipeline.rebuild import rebuild
-    return rebuild(opt, keep, remesh_space(space, cfg, global_size, bore_size), cfg).final
-
-
-def tet_mesh(surface: trimesh.Trimesh, cfg: dict, global_size: float) -> pv.UnstructuredGrid:
-    """Quadratic tets (TetGen): sizes grade in from the surface triangulation, with tet volume capped at
-    tet_volume_cap * global_size^3. The cap goes in as a raw switch string: this tetgen build ignores the
-    maxvolume keyword, and segfaults when given a background sizing mesh.
-
-    TetGen runs in a child process killed after tet_timeout seconds: on some remeshes it never returns
-    (once 74 min on the full SPACE body). A timeout or crash raises RuntimeError, like a TetGen failure,
-    so the caller retries on a fresh remesh."""
-    import multiprocessing as mp
+def prime_mesh(stl: Path, cfg: dict, global_size: float, bore_size: float, cdb: Path) -> FeMesh:
+    """Wrap `stl` in Prime (curvature sizing between bore_size and global_size, feature edges recovered),
+    check that the wrap is free of self-intersections, fill it with quadratic tets, and export a CDB.
+    Each mesh gets a fresh Prime session, so levels don't share state."""
+    import ansys.meshing.prime as prime
+    from ansys.meshing.prime import lucid
 
     vc = cfg["validate"]
-    switches = f"pq{vc['tet_radius_edge']}a{vc['tet_volume_cap'] * global_size ** 3:.6g}o2Q"
-    with tempfile.TemporaryDirectory(prefix="tetgen_") as tmp:
-        src, dst = Path(tmp) / "surface.npz", Path(tmp) / "grid.npz"
-        np.savez(src, vertices=np.asarray(surface.vertices), faces=np.asarray(surface.faces))
-        proc = mp.get_context("spawn").Process(target=_tet_mesh_child, args=(str(src), str(dst), switches))
-        proc.start()
-        proc.join(vc["tet_timeout"])
-        if proc.is_alive():
-            proc.kill()
-            proc.join()
-            raise RuntimeError(f"TetGen timed out after {vc['tet_timeout']} s")
-        if proc.exitcode != 0 or not dst.exists():
-            raise RuntimeError(f"TetGen child exited with code {proc.exitcode}")
-        with np.load(dst) as d:
-            return pv.UnstructuredGrid(d["cells"], d["celltypes"], d["points"])
+    root = os.path.join(os.environ[f"AWP_ROOT{cfg['mechanical']['version']}"], "meshing", "Prime")
+    client = prime.launch_prime(prime_root=root, timeout=180)
+    try:
+        model = client.model
+        mesh = lucid.Mesh(model)
+        mesh.read(str(stl))
+        mesh.wrap(min_size=bore_size, max_size=global_size, growth_rate=vc["growth_rate"],
+                  elements_per_gap=vc["wrap_elements_per_gap"], feature_angle=vc["feature_angle"])
+        part = model.parts[0]
+        found = prime.SurfaceSearch(model).search_zonelets_by_self_intersections(
+            part.id, part.get_face_zonelets(), 1, prime.SearchBySelfIntersectionParams(model)).n_found
+        if found:
+            raise ValueError(f"Prime wrap of {stl.name} at {global_size}/{bore_size} mm self-intersects "
+                             f"({found} faces)")
+        model.set_global_sizing_params(prime.GlobalSizingParams(model, min=bore_size, max=global_size,
+                                                                growth_rate=vc["growth_rate"]))
+        mesh.volume_mesh(volume_fill_type=prime.VolumeFillType.TET, quadratic=True)
+        mesh.write(str(cdb))
+    finally:
+        client.exit()
+    fe = read_cdb(cdb)
+    if not fe.n_elements:
+        raise ValueError(f"Prime produced no tets for {stl.name} at {global_size}/{bore_size} mm")
+    return fe
 
 
-def _tet_mesh_child(src: str, dst: str, switches: str) -> None:
-    """tet_mesh's child process: surface arrays in, grid arrays out (npz, no VTK file I/O)."""
-    with np.load(src) as d:
-        v, f = d["vertices"], d["faces"]
-    tet = tetgen.TetGen(pv.PolyData(v, np.hstack([np.full((len(f), 1), 3), f]).ravel()))
-    tet.tetrahedralize(switches=switches)
-    g = tet.grid
-    np.savez(dst, cells=np.asarray(g.cells), celltypes=np.asarray(g.celltypes), points=np.asarray(g.points))
+def add_node_components(cdb: Path, components: dict[str, np.ndarray]) -> None:
+    """Insert node CMBLOCKs before the CDB's closing FINISH (MAPDL reads CMBLOCK only inside CDREAD)."""
+    with open(cdb, "r+b") as f:
+        f.seek(-64, os.SEEK_END)
+        tail = f.read()
+        cut = tail.rfind(b"FINISH")
+        if cut < 0:
+            raise ValueError(f"{cdb.name} does not end with FINISH")
+        f.seek(cut - len(tail), os.SEEK_END)
+        f.truncate()
+        for name, nodes in components.items():
+            f.write(f"CMBLOCK,{name},NODE,{len(nodes):10d}\n(8i10)\n".encode())
+            for i in range(0, len(nodes), 8):
+                f.write("".join(f"{n:10d}" for n in nodes[i:i + 8]).encode() + b"\n")
+        f.write(b"FINISH\n")
 
 
 # --------------------------------------------------------------------------- solve
 
-def solve(grid: pv.UnstructuredGrid, cfg: dict, mapdl, work: Path) -> dict:
-    """Linear static on a quadratic tet grid. Returns pilot UZ, node arrays and nodal von Mises."""
+def solve(fe: FeMesh, cfg: dict, mapdl) -> dict:
+    """Linear static on a Prime quadratic tet mesh. Returns pilot UZ and nodal von Mises (by row)."""
     vc, mc = cfg["validate"], cfg["material"]
     r = bore_radius(cfg)
-    pts = np.asarray(grid.points)
+    pts = fe.points
 
     def bore_nodes(zone):
         lo, hi = zone_x_range(cfg, zone)
         near = np.abs(radial_to_axes(pts, cfg, zone) - r) <= vc["fix_radial_tol"]
-        return near & (pts[:, 0] >= lo) & (pts[:, 0] <= hi)
+        return near & (pts[:, 0] >= lo) & (pts[:, 0] <= hi) & fe.used
 
     fix, load = bore_nodes("FIX"), bore_nodes("LOAD")
     if not fix.any() or not load.any():
         raise ValueError(f"no bore-surface nodes found (FIX {fix.sum()}, LOAD {load.sum()}): "
                          "the mesh has no bores to carry the BCs")
-    grid = grid.copy()
-    grid.point_data["FIXNODES"] = fix
-    grid.point_data["LOADNODES"] = load
-    ones = np.ones(grid.n_cells, dtype=np.int32)
-    grid.cell_data["ansys_material_type"] = ones       # save_as_archive otherwise numbers these per cell
-    grid.cell_data["ansys_real_constant"] = ones
-    grid.cell_data["ansys_etype"] = ones
-    grid.cell_data["ansys_elem_type_num"] = np.full(grid.n_cells, 187, dtype=np.int32)
-
-    from ansys.mapdl.reader import save_as_archive
-    cdb = work / "model.cdb"
-    save_as_archive(str(cdb), grid)
+    add_node_components(fe.cdb, {"FIXNODES": fe.nnum[fix], "LOADNODES": fe.nnum[load]})
 
     lc = cfg["loads"]["remote_force"]
     mapdl.clear()
     mapdl.prep7()
-    mapdl.cdread("DB", str(cdb))
-    mapdl.mp("EX", 1, mc["youngs_modulus"])           # MPa
-    mapdl.mp("PRXY", 1, mc["poisson_ratio"])
-    mapdl.mp("DENS", 1, mc["density"] * 1e-12)         # kg/m^3 -> tonne/mm^3
-    pilot = len(pts) + 1
+    mapdl.cdread("DB", str(fe.cdb))
+    mapdl.prep7()                                      # the CDB ends with FINISH
+    for mat in fe.materials:
+        mapdl.mp("EX", mat, mc["youngs_modulus"])     # MPa
+        mapdl.mp("PRXY", mat, mc["poisson_ratio"])
+        mapdl.mp("DENS", mat, mc["density"] * 1e-12)  # kg/m^3 -> tonne/mm^3
+    pilot = int(fe.nnum.max()) + 1
     mapdl.n(pilot, *vc["pilot"])
     et = int(mapdl.get_value("ETYP", 0, "NUM", "MAX")) + 1     # the CDB already defines some types
     rl = int(mapdl.get_value("RCON", 0, "NUM", "MAX")) + 1
@@ -187,45 +174,40 @@ def solve(grid: pv.UnstructuredGrid, cfg: dict, mapdl, work: Path) -> dict:
     mapdl.finish()
     mapdl.slashsolu()
     mapdl.antype("STATIC")
+    mapdl.eqslv(vc["solver"], vc["solver_tol"])
     mapdl.solve()
     mapdl.finish()
     mapdl.post1()
     mapdl.set(1, 1)
     uz = mapdl.get_value("NODE", pilot, "U", "Z")
-    nnum = mapdl.mesh.nnum
+    nnum = np.asarray(mapdl.mesh.nnum)
     seqv = mapdl.post_processing.nodal_eqv_stress()
+    row = np.full(max(int(nnum.max()), pilot) + 1, -1, dtype=np.int64)
+    row[fe.nnum] = np.arange(len(fe.nnum))
     vm = np.full(len(pts), np.nan)
-    keep = nnum <= len(pts)
-    vm[nnum[keep] - 1] = seqv[keep]
+    hit = row[nnum] >= 0
+    vm[row[nnum[hit]]] = seqv[hit]
     mapdl.finish()
     return {"uz": float(uz), "vm": vm, "n_fix": int(fix.sum()), "n_load": int(load.sum())}
 
 
 # --------------------------------------------------------------------------- stresses
 
-def tet_volume(grid: pv.UnstructuredGrid) -> float:
-    """Volume from the corner nodes (no VTK filters: Application Control blocks vtkFiltersVerdict here)."""
-    c = np.asarray(grid.cells_dict[pv.CellType.QUADRATIC_TETRA])[:, :4]
-    p = np.asarray(grid.points)
-    a, b, cc, d = (p[c[:, i]] for i in range(4))
-    return float(np.abs(np.einsum("ij,ij->i", b - a, np.cross(cc - a, d - a))).sum() / 6)
-
-
-def stress_report(grid: pv.UnstructuredGrid, vm: np.ndarray, cfg: dict) -> dict:
+def stress_report(fe: FeMesh, vm: np.ndarray, cfg: dict) -> dict:
     vc = cfg["validate"]
     r, R = bore_radius(cfg), keep_radius(cfg)
-    pts = np.asarray(grid.points)
+    pts = fe.points
     rho = radial_to_axes(pts, cfg)
 
-    members = rho > R + vc["exclude_near_features"]
+    members = (rho > R + vc["exclude_near_features"]) & fe.used
     out = {"member_vm_max": float(np.nanmax(vm[members])) if members.any() else None, "bores": {}}
 
     shell = vc["seam_shell_halfwidth"]
     for b in bores(cfg):
         rb = np.hypot(pts[:, 0] - b.x, pts[:, 2] - b.z)
-        on_bore = np.abs(rb - r) <= vc["fix_radial_tol"]
+        on_bore = (np.abs(rb - r) <= vc["fix_radial_tol"]) & fe.used
         # Seam: nodes in a thin shell at a fixed offset outside the keep boundary (creases are singular).
-        seam = np.abs(rb - (R + vc["seam_sample_offset"])) <= shell
+        seam = (np.abs(rb - (R + vc["seam_sample_offset"])) <= shell) & fe.used
         out["bores"][b.name] = {
             "bore_vm_max": float(np.nanmax(vm[on_bore])) if on_bore.any() else None,
             "seam_vm_max": float(np.nanmax(vm[seam])) if seam.any() else None,
@@ -236,9 +218,13 @@ def stress_report(grid: pv.UnstructuredGrid, vm: np.ndarray, cfg: dict) -> dict:
 
 # --------------------------------------------------------------------------- driver
 
-def validate(make_surface, reference: trimesh.Trimesh, cfg: dict, mapdl, work: Path) -> dict:
-    """make_surface(global_size, bore_size) -> surface to tet-mesh at that level. Mass and volume come
-    from `reference` (final.stl), the part that would be printed."""
+def validate(stl: Path, reference: trimesh.Trimesh, cfg: dict, work: Path, nprocs: list[int] | None = None
+             ) -> dict:
+    """Mesh `stl` at successively halved sizes and solve until pilot UZ converges. Mass and volume come
+    from `reference` (the stl as loaded), the part that would be printed.
+
+    Prime and MAPDL check out the same base license (`ansys`) and the pool grants one seat, so each level
+    meshes with Prime closed before MAPDL starts, and MAPDL exits before the next level meshes."""
     vc = cfg["validate"]
     lc = cfg["loads"]["remote_force"]
     F = lc["magnitude"]
@@ -246,31 +232,26 @@ def validate(make_surface, reference: trimesh.Trimesh, cfg: dict, mapdl, work: P
     g, b = vc["global_size"], vc["bore_size"]
     for level in range(MAX_LEVELS):
         t0 = time.perf_counter()
-        # TetGen occasionally fails on a given remesh (split_subface / recoversubfaces); the remesh
-        # differs between calls, so retry both.
-        errors = []
-        for attempt in range(REMESH_ATTEMPTS):
-            surface = make_surface(g, b)
-            try:
-                grid = tet_mesh(surface, cfg, g)
-                break
-            except RuntimeError as e:
-                errors.append(str(e))
-        else:
-            raise ValueError(f"TetGen failed at {g}/{b} mm on {REMESH_ATTEMPTS} remeshes: {errors}")
+        fe = prime_mesh(stl, cfg, g, b, work / f"level{level}.cdb")
         t1 = time.perf_counter()
-        res = solve(grid, cfg, mapdl, work)
+        mapdl, nproc = launch(cfg, work, nprocs)
+        try:
+            ansys_version = str(mapdl.version)
+            res = solve(fe, cfg, mapdl)
+        finally:
+            mapdl.exit()
         t2 = time.perf_counter()
-        rec = {"level": level, "global_size": g, "bore_size": b, "nodes": int(grid.n_points),
-               "elements": int(grid.n_cells), "tet_volume": tet_volume(grid),
-               "fe_surface_volume": float(surface.volume), "mesh_attempts": len(errors) + 1,
+        tet_volume = fe.volume()
+        rec = {"level": level, "global_size": g, "bore_size": b, "nodes": int(fe.used.sum()),
+               "elements": fe.n_elements, "tet_volume": tet_volume,
+               "volume_error": tet_volume / float(reference.volume) - 1,
                "pilot_uz": res["uz"],
-               "n_fix_nodes": res["n_fix"], "n_load_nodes": res["n_load"],
+               "n_fix_nodes": res["n_fix"], "n_load_nodes": res["n_load"], "nproc": nproc,
                "mesh_time": t1 - t0, "solve_time": t2 - t1}
         if prev is not None:
             rec["uz_change"] = abs(res["uz"] - prev) / abs(prev)
         levels.append(rec)
-        print(f"level {level}: h {g:g}/{b:g} mm, {grid.n_cells} tets, pilot UZ {res['uz']:.6f} mm"
+        print(f"level {level}: h {g:g}/{b:g} mm, {fe.n_elements} tets, pilot UZ {res['uz']:.6f} mm"
               + (f", change {rec['uz_change']:.2%}" if prev is not None else ""), flush=True)
         if prev is not None and rec["uz_change"] < vc["convergence_tol"]:
             break
@@ -292,7 +273,8 @@ def validate(make_surface, reference: trimesh.Trimesh, cfg: dict, mapdl, work: P
         "volume": volume,
         "mass": mass,
         "specific_stiffness": F / abs(uz) / mass,           # N/mm/kg
-        "stress": stress_report(grid, res["vm"], cfg),
+        "stress": stress_report(fe, res["vm"], cfg),
+        "ansys_version": ansys_version,
     }
 
 
@@ -322,34 +304,22 @@ def launch(cfg: dict, work: Path, nprocs: list[int] | None = None):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-dir", required=True, type=Path)
-    ap.add_argument("--geometry-dir", default=Path("geometry"), type=Path)
     ap.add_argument("--raw", action="store_true", help="validate opt.stl as-is (raw M0), not the rebuild")
     ap.add_argument("--config", action="append", default=[])
     ap.add_argument("--nproc", type=int, help="MAPDL processes (default: try each of validate.nproc)")
     a = ap.parse_args(argv)
     cfg = load_config(*a.config)
-    opt = geom.load_mesh(a.run_dir / "opt.stl")
-    if a.raw:
-        reference, mesh_name = opt, "opt.stl"
-        make_surface = lambda g, b: opt                                     # noqa: E731
-    else:
-        reference, mesh_name = geom.load_mesh(a.run_dir / "final.stl"), "final.stl"
-        keep = geom.load_mesh(a.geometry_dir / "keep.stl")
-        space = geom.load_mesh(a.geometry_dir / "space.stl")
-        make_surface = lambda g, b: fe_surface(opt, keep, space, cfg, g, b)  # noqa: E731
+    stl = a.run_dir / ("opt.stl" if a.raw else "final.stl")
     out = a.run_dir / ("validation_raw.json" if a.raw else "validation.json")
 
     work = Path(tempfile.mkdtemp(prefix="validate_"))
-    mapdl, nproc = launch(cfg, work, [a.nproc] if a.nproc else None)
     try:
-        report = validate(make_surface, reference, cfg, mapdl, work)
+        report = validate(stl, geom.load_mesh(stl), cfg, work, [a.nproc] if a.nproc else None)
     except ValueError as e:
         report = {"status": "not_validated", "reason": str(e)}
     finally:
-        report_version = str(mapdl.version)
-        mapdl.exit()
         shutil.rmtree(work, ignore_errors=True)
-    report.update(mesh=mesh_name, ansys_version=report_version, nproc=nproc)
+    report.update(mesh=stl.name)
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps({k: report.get(k) for k in ("status", "reason", "converged", "pilot_uz", "compliance",
                                                  "strain_energy", "mass", "specific_stiffness")}, indent=2))

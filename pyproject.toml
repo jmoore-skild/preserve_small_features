@@ -5,7 +5,7 @@ description = "Exclude-and-rebuild topology optimization: cantilever evaluation"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy", "scipy", "pyyaml", "matplotlib", "requests",
-    "trimesh", "manifold3d", "rtree", "tetgen", "pyvista", "pymeshlab",
+    "trimesh", "manifold3d", "rtree", "ansys-meshing-prime==0.10.5",
     "ansys-mechanical-core", "ansys-mapdl-core", "ansys-mapdl-reader",
 ]
 
