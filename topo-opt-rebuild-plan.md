@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16; Phase 4 (run matrix) in progress. See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written and awaits Josh's review. See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -249,7 +249,7 @@ The goal is to validate the measuring tools before they measure anything real.
 **Post-processing.**
 
 - [x] Run `rebuild` + `measure` + `validate` on both runs.
-- [ ] If the settings don't change after Gate 2, these two runs count toward the matrix.
+- [x] If the settings don't change after Gate 2, these two runs count toward the matrix. (Re-run on 24 cores for comparable timings.)
 
 **Questions to answer.** Record the answers in `results/smoke_test.md`:
 
@@ -269,13 +269,13 @@ The goal is to validate the measuring tools before they measure anything real.
 
 ### Phase 4 — Run matrix and report
 
-- [ ] Run the core matrix (Section 5), then the extras chosen at Gate 2.
-- [ ] Process each run: measure M0 runs on their raw STL; for M0R, M3, and M2, run rebuild → measure → validate. Write all artifacts to `runs/<run_id>/`.
-- [ ] `collect.py` writes `results/summary.csv` and these plots:
+- [x] Run the core matrix (Section 5), then the extras chosen at Gate 2. (M0 at h = 1 is optional and wasn't run.)
+- [x] Process each run: measure M0 runs on their raw STL; for M0R, M3, and M2, run rebuild → measure → validate. Write all artifacts to `runs/<run_id>/`.
+- [x] `collect.py` writes `results/summary.csv` and these plots:
   - bore error vs h, by method,
   - specific stiffness vs TO wall time,
   - volume bookkeeping per run.
-- [ ] Write `results/REPORT.md` covering:
+- [x] Write `results/REPORT.md` covering:
   - pass/fail against Section 9,
   - predictions vs outcomes (Section 10),
   - a recommendation for production use.
@@ -462,3 +462,6 @@ Phase 4 setup:
 - **X2 (8 mm exclusion) hurts:** it stops after 3 iterations, like M0, and gives 15 % lower specific stiffness than M3_h4. 3.75 mm holds below one element.
 - **Cores don't change results:** M3_h4 on 24 cores is within 0.14 % of the 4-core run.
 - **Timing probe:** M3_h2 has 80 242 elements, a 211 s TO solve and 18 iterations, on 24 cores with 1.7 GB of MAPDL memory. Projected h = 1: about 640 k elements, roughly 20–40 min and about 14 GB, so the h = 1 reference is affordable. **Reference = h = 1** (`M3_h1`), started 2026-10-16.
+
+**2026-10-16 (evening) — Phase 4 done.** M3_h1 (reference) has 428 171 elements and took a 385 s TO solve on 24 cores; its features are exact, and its specific stiffness is 1 654 N/mm/kg. `pipeline/collect.py` writes `results/summary.csv` and three plots. `results/REPORT.md` leads with feature preservation: every rebuilt run is exact, and raw M0 is not. Its recommendation is M3 + rebuild at h = 2 (−2.3 % vs reference at half the TO time). M3_h4 misses the 10 % payoff criterion by 1.6 points.
+
