@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. **Next: Phase 5.** See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. Phase 5 is built (2026-10-20): both beams pass the generic checks; the bracket awaits marking by Josh, then **Gate 3**. See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -303,21 +303,21 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 
 **FeatureScript.** Written to the working document through the Onshape MCP (which uses Josh's API allocation; tell him before starting).
 
-- [ ] `featurescript/PreserveRegion.fs`, Feature Studio `PreserveRegion`. Parameters:
+- [x] `featurescript/PreserveRegion.fs`, Feature Studio `PreserveRegion`. Parameters:
   - faces (on one part),
   - role (FIX / LOAD / PASSIVE),
   - label (A–Z, 0–9, `_`; default `1`),
   - wall thickness t into the material (this is also the Exclusion Thickness),
   - void margin m into the void (default 0.5 mm).
-- [ ] Build the keep with `opThicken`: t into the material and m into the void *(verify the parameter names and which side each thickness goes)*. Make one body per connected face group, named `KEEP_<ROLE>_<label>`, or `KEEP_<ROLE>_<label>_<k>` when there are several.
-- [ ] The void margin is required. The keep must straddle every preserved face so that the face in `final` comes only from `SPACE`'s tessellation (Section 1). A keep face lying on a bore would put two tessellations of the same curved surface into the boolean. The beam's solid cylinders straddle by construction.
-- [ ] Attach an attribute to each keep body: role, label, t, m, the selected face count and their total area. The exporter reads it, and the face matching in Phase 6 is checked against it.
-- [ ] Fail in the feature with a clear message when faces span more than one part, when the label is invalid, or when the thicken fails (for example m ≥ a bore radius).
-- [ ] `TopoTestBeam`: add a `createKeeps` boolean (default true) so the beam can also be marked with the new feature.
+- [x] Build the keep with `opThicken`: t into the material and m into the void (verified: `thickness1` runs along the outward face normal, into the void, so it takes m; `thickness2` takes t). Make one body per connected face group, named `KEEP_<ROLE>_<label>`, or `KEEP_<ROLE>_<label>_<k>` when there are several.
+- [x] The void margin is required. The keep must straddle every preserved face so that the face in `final` comes only from `SPACE`'s tessellation (Section 1). A keep face lying on a bore would put two tessellations of the same curved surface into the boolean. The beam's solid cylinders straddle by construction.
+- [x] Attach an attribute to each keep body: role, label, t, m, the selected face count and their total area. The exporter reads it, and the face matching in Phase 6 is checked against it.
+- [x] Fail in the feature with a clear message when faces span more than one part, when the label is invalid, or when the thicken fails (for example m ≥ a bore radius).
+- [x] `TopoTestBeam`: add a `createKeeps` boolean (default true) so the beam can also be marked with the new feature.
 
 **Modelling guide.**
 
-- [ ] `docs/modelling.md`, for Josh and teammates:
+- [x] `docs/modelling.md`, for Josh and teammates:
   - model `SPACE` with every small feature cut in;
   - split a face to preserve only part of it (for example a washer seat);
   - use one Preserve region per functional interface;
@@ -326,26 +326,26 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 
 **Test geometry.**
 
-- [ ] **Beam, re-marked:** a second Part Studio with `TopoTestBeam` (`createKeeps` = false) and Preserve region on the 8 bores (t = 3.75 mm, m = 0.5 mm).
-- [ ] **Bracket:** `featurescript/TestBracket.fs`, an L-bracket that covers what the beam doesn't: holes on two non-parallel axes, a counterbored hole, a planar mating pad (split face), and a slot. Josh instances it and marks it with Preserve region in the GUI, which also tests the workflow.
+- [x] **Beam, re-marked:** a second Part Studio with `TopoTestBeam` (`createKeeps` = false) and Preserve region on the 8 bores (t = 3.75 mm, m = 0.5 mm).
+- [ ] **Bracket:** `featurescript/TestBracket.fs`, an L-bracket that covers what the beam doesn't: holes on two non-parallel axes, a counterbored hole, a planar mating pad (split face), and a slot. Josh instances it and marks it with Preserve region in the GUI, which also tests the workflow. *(Feature written and instanced in Part Studio "Bracket" 2026-10-20; marking by Josh pending.)*
 
 **Export (`onshape_export.py --part <part>`).**
 
-- [ ] Per-part config `config/parts/<part>.yaml`: Onshape IDs, material, supports and loads by region name, TO overrides, and t for any hand-modelled keeps. The beam moves to `config/parts/beam.yaml` (plus `beam_marked.yaml`); `base.yaml` keeps only the shared settings.
-- [ ] Find `SPACE` and every `KEEP_*` by name; don't take the list from the config.
-- [ ] Read the keep attributes through the FeatureScript evaluate endpoint *(verify)*, and write each region's role, label, t, m, face count and area to `geometry/<part>/regions.json`. A hand-modelled keep without an attribute takes t from the part YAML; if there's no t there either, fail.
-- [ ] Get `SPACE`'s exact volume from Onshape's mass properties *(verify endpoint)*.
+- [x] Per-part config `config/parts/<part>.yaml`: Onshape IDs, material, supports and loads by region name, TO overrides, and t for any hand-modelled keeps. The beam moves to `config/parts/beam.yaml` (plus `beam_marked.yaml`); `base.yaml` keeps only the shared settings.
+- [x] Find `SPACE` and every `KEEP_*` by name; don't take the list from the config.
+- [x] Read the keep attributes through the FeatureScript evaluate endpoint (verified), and write each region's role, label, t, m, face count and area to `geometry/<part>/regions.json`. A hand-modelled keep without an attribute takes t from the part YAML; if there's no t there either, fail.
+- [x] Get `SPACE`'s exact volume from Onshape's mass properties (verified: the body comes back keyed `-all-`, in m³).
 
 **Checks (`geometry_check.py`, generic).** All must pass:
 
-- [ ] The `SPACE` STL volume is within ±0.1 % of the Onshape mass-properties volume. This replaces the beam's analytic formula.
-- [ ] All STLs are watertight volumes.
-- [ ] Names are unique and well formed. There is at least one FIX and one LOAD region, and every region the part YAML names exists.
-- [ ] Each keep straddles its faces: K ∩ `SPACE`, K − `SPACE` and S are all non-empty.
-- [ ] Per region, the area of S measured on the STL matches the attribute's face area within 1 % (tessellation tolerance).
-- [ ] No FIX keep overlaps a LOAD keep.
-- [ ] `keep.stl` is the union of all `KEEP_*` parts, as one manifold.
-- [ ] The original beam (hand-modelled keeps, t from YAML) passes.
+- [x] The `SPACE` STL volume is within ±0.1 % of the Onshape mass-properties volume. This replaces the beam's analytic formula.
+- [x] All STLs are watertight volumes.
+- [x] Names are unique and well formed. There is at least one FIX and one LOAD region, and every region the part YAML names exists.
+- [x] Each keep straddles its faces: K ∩ `SPACE`, K − `SPACE` and S are all non-empty.
+- [x] Per region, the area of S measured on the STL matches the attribute's face area within 1 % (tessellation tolerance).
+- [x] No FIX keep overlaps a LOAD keep.
+- [x] `keep.stl` is the union of all `KEEP_*` parts, as one manifold.
+- [x] The original beam (hand-modelled keeps, t from YAML) passes.
 
 **Gate 3:** Josh reviews the feature in the GUI on both parts (how it feels to use, names, error messages), `docs/modelling.md`, and the `geometry_check` output.
 
@@ -615,3 +615,20 @@ Phase 4 setup:
   - where the plugin is published (Phase 7).
 - **Phase 4 run artifacts** stay under `runs/<run_id>/`. Move them to `runs/beam/` when the layout changes, so the regression can read them.
 
+**2026-10-20 — Phase 5 built; Gate 3 waits on the bracket marking.** Commits `a6520d6`, `7bbb981`.
+
+- **Onshape document now holds:**
+  - Feature Studios `PreserveRegion` (`4778f12f98e205100bf31df6`), `TestBracket` (`73355875827b9bb43e74f4f1`), and `TopoTestBeam` with the new `createKeeps` switch.
+  - Part Studios "Beam marked" (`4ed834e6af017d62bfa18f73`) and "Bracket" (`71998051ac301addb3814c18`).
+  - An empty duplicate `PreserveRegion` studio (`f1ed77ae…`) left by an MCP call that reported failure but went through. The API keys can't delete elements; Josh deletes it in the GUI.
+- **Results:** `beam` (hand-modelled keeps) and `beam_marked` pass every generic check. The S areas are within 0.005 % of the feature's face areas. The Onshape mass-properties volume equals the Phase 1 analytic volume, and `beam` also passes the legacy analytic checks.
+- **Layout:** new exports go to `geometry/<part>/`. Phase 1–4 code still reads `geometry/` and the beam keys in `base.yaml`, and `geometry_check` without `--part` keeps the old behaviour. Phase 6 does the move.
+- **Region model:** a region is `<ROLE>_<label>`. A Preserve region feature that selects several separate face groups makes one region with keeps `_1.._k`, so the marked beam has FIX_1 (4 keeps), LOAD_1 and PASSIVE_1, while the hand-modelled beam has FIX_1..4 and so on.
+- **Facts learned:**
+  - `getProperty(NAME)` isn't available while a feature regenerates (it came back empty), so the feature can't check that its faces are on `SPACE`; `geometry_check` catches that case instead.
+  - S area is measured by per-triangle quadrature, not subdivision. Onshape's planar faces are long slivers, and subdividing them exploded to millions of triangles. Region boundaries fall on triangle edges because Onshape tessellates each face separately.
+  - The STEP translation sometimes takes about 9 minutes on Onshape's side.
+- **Environment:**
+  - Smart App Control blocks uv's venv launcher. `.venv` was rebuilt with the stdlib `python -m venv --upgrade`; don't run `uv venv` on it.
+  - The Onshape MCP session expired mid-session and showed up as "unexpected error". REST with the API keys works as a fallback for writing Feature Studios (`POST featurestudios/...` with `sourceMicroversion`) and placing features.
+- **Next:** Josh marks the bracket (suggested: FIX on the two base holes plus the counterbored hole, LOAD on the upright holes and the mating pad, PASSIVE on the slot; t = 3 mm suits the 8 mm plates). Then run `onshape_export --part bracket` and `geometry_check --part bracket`, settle the bracket's loads in `config/parts/bracket.yaml`, and hold **Gate 3**.
