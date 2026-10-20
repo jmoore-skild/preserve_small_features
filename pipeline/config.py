@@ -10,6 +10,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 BASE_CONFIG = REPO / "config" / "base.yaml"
+PARTS_DIR = REPO / "config" / "parts"
 
 
 @dataclass(frozen=True)
@@ -71,3 +72,20 @@ def circular_segments(cfg: dict, radius: float) -> int:
     n_chord = math.pi / math.acos(max(-1.0, 1.0 - exp["stl_chord_tolerance"] / radius))
     n = math.ceil(max(n_angle, n_chord))
     return int(4 * math.ceil(n / 4))
+
+
+def load_part(name: str) -> dict:
+    """config/parts/<name>.yaml, with `name` filled in and the BC lists defaulted to empty."""
+    path = PARTS_DIR / f"{name}.yaml"
+    if not path.exists():
+        known = sorted(p.stem for p in PARTS_DIR.glob("*.yaml"))
+        raise FileNotFoundError(f"no part config {path}; known parts: {known}")
+    part = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    part["name"] = name
+    part.setdefault("supports", [])
+    part.setdefault("loads", [])
+    return part
+
+
+def geometry_dir(part: str) -> Path:
+    return REPO / "geometry" / part

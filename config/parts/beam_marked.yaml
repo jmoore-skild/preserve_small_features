@@ -1,0 +1,13 @@
+# The same beam, with keeps from the Preserve region feature (t = 3.75 mm, m = 0.5 mm) on the 8 bores.
+onshape:
+  element_id: 4ed834e6af017d62bfa18f73     # Part Studio "Beam marked"
+
+supports:
+  - type: fixed
+    regions: all
+loads:
+  - type: remote_force
+    regions: all
+    magnitude: 200.0
+    direction: [0, 0, -1]
+    behavior: deformable

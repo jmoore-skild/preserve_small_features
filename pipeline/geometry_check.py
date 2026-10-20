@@ -1,10 +1,13 @@
-"""Verify the exported geometry against base.yaml and write keep.stl (plan Phase 1 checks).
+"""Verify exported geometry and write keep.stl. Exits non-zero if any check fails; nothing downstream should run
+on a failure.
 
+    python -m pipeline.geometry_check --part <part>       # generic checks (plan Phase 5) on geometry/<part>
     python -m pipeline.geometry_check [--geometry-dir geometry]
+                                                          # beam analytic checks (Phase 1) on geometry/
     python -m pipeline.geometry_check --write-standin     # procedural SPACE/KEEP_* for dry runs, then check
 
-Reads space.stl and keep_parts/KEEP_*.stl; writes keep.stl (union of KEEP_* parts) and
-geometry_check.json. Exits non-zero if any check fails. Nothing downstream should run on a failure.
+Reads space.stl and keep_parts/KEEP_*.stl (and, with --part, export.json and regions.json); writes keep.stl
+(union of KEEP_* parts) and geometry_check.json.
 """
 from __future__ import annotations
 
@@ -15,8 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
-from pipeline import geom
-from pipeline.config import REPO, bore_radius, bores, keep_radius, load_config
+from pipeline import geom, regions as rg
+from pipeline.config import REPO, bore_radius, bores, geometry_dir, keep_radius, load_config, load_part
 
 POS_TOL = 0.01      # mm, bore/keep axis position (plan Phase 1)
 VOL_TOL = 0.001     # relative
@@ -120,6 +123,96 @@ def check_geometry(gdir: Path, cfg: dict) -> tuple[Checks, object]:
     return c, keep
 
 
+def _bc_regions(entries: list[dict], role: str, regions: list[rg.Region]) -> tuple[list[str], list[str]]:
+    """Region names the part YAML's supports/loads refer to: (resolved, problems)."""
+    of_role = [r.name for r in regions if r.role == role]
+    known = {r.name: r.role for r in regions}
+    names, problems = [], []
+    for e in entries:
+        sel = e.get("regions", "all")
+        sel = of_role if sel == "all" else list(sel)
+        for n in sel:
+            if n not in known:
+                problems.append(f"{n} does not exist")
+            elif known[n] != role:
+                problems.append(f"{n} is {known[n]}, not {role}")
+        names += sel
+    return names, problems
+
+
+def check_part(gdir: Path, cfg: dict, part: dict) -> tuple[Checks, object]:
+    """Generic checks for a part marked with preserve regions (plan Phase 5)."""
+    c = Checks()
+    tol = cfg["regions"]
+    export = json.loads((gdir / "export.json").read_text(encoding="utf-8"))
+    regions = rg.load_regions(gdir / "regions.json")
+
+    space = geom.load_mesh(gdir / "space.stl")
+    c.add("space watertight volume", space.is_volume)
+    if len(space.faces) == 0:
+        c.add("space.stl readable", False, reason="empty mesh")
+        return c, None
+    v_ref = export["space_volume_mm3"]
+    c.add("space volume vs Onshape", abs(space.volume / v_ref - 1) <= tol["space_volume_tol"],
+          volume=space.volume, onshape=v_ref, rel_error=space.volume / v_ref - 1)
+
+    # Names and roles.
+    kdir = gdir / "keep_parts"
+    files = {p.stem: p for p in kdir.glob("KEEP_*.stl")}
+    listed = [k.part for r in regions for k in r.keeps]
+    c.add("keep names well formed and unique",
+          all(rg.parse_keep_name(n) for n in listed) and len(set(listed)) == len(listed),
+          bad=sorted(n for n in listed if not rg.parse_keep_name(n)))
+    c.add("keep files match regions.json", set(files) == set(listed),
+          missing=sorted(set(listed) - set(files)), unexpected=sorted(set(files) - set(listed)))
+    roles = {r.role for r in regions}
+    c.add("at least one FIX and one LOAD region", {"FIX", "LOAD"} <= roles, regions=[r.name for r in regions])
+    fix_names, p1 = _bc_regions(part["supports"], "FIX", regions)
+    load_names, p2 = _bc_regions(part["loads"], "LOAD", regions)
+    c.add("part YAML regions exist with the right role", not (p1 + p2) and bool(fix_names) and bool(load_names),
+          problems=p1 + p2, supports=fix_names, loads=load_names)
+
+    # Per keep: watertight, straddles SPACE, S area vs attribute.
+    m_space = geom.to_manifold(space)
+    meshes = {}
+    for r in regions:
+        for k in r.keeps:
+            if k.part not in files:
+                continue
+            km = geom.load_mesh(files[k.part])
+            c.add(f"{k.part} watertight volume", km.is_volume)
+            if not km.is_volume:
+                continue
+            meshes[k.part] = (r, km)
+            m_k = geom.to_manifold(km)
+            v_in = (m_k ^ m_space).volume()
+            v_out = (m_k - m_space).volume()
+            s_area = rg.surface_in_keep(space, km, tol["surface_tol"])
+            c.add(f"{k.part} straddles its faces", v_in > 0 and v_out > 0 and s_area > 0,
+                  in_space_mm3=v_in, outside_space_mm3=v_out, s_area_mm2=s_area)
+            if k.area_mm2 is not None:
+                c.add(f"{k.part} S area vs attribute", abs(s_area / k.area_mm2 - 1) <= tol["area_tol"],
+                      s_area_mm2=s_area, attribute_mm2=k.area_mm2, rel_error=s_area / k.area_mm2 - 1)
+
+    by_role = {role: [geom.to_manifold(km) for (r, km) in meshes.values() if r.role == role] for role in rg.ROLES}
+    if by_role["FIX"] and by_role["LOAD"]:
+        ov = (geom.union_all(by_role["FIX"]) ^ geom.union_all(by_role["LOAD"])).volume()
+        c.add("FIX and LOAD keeps don't overlap", ov <= tol["overlap_tol"], overlap_mm3=ov)
+
+    keep = None
+    if meshes and len(meshes) == len(listed):
+        keep = geom.to_trimesh(geom.union_all(geom.to_manifold(km) for (_, km) in meshes.values()))
+        c.add("keep.stl union is one manifold", keep.is_volume, bodies=len(keep.split(only_watertight=False)))
+    else:
+        c.add("keep.stl union is one manifold", False, reason="keep parts missing or not volumes")
+
+    if part.get("legacy_beam_checks"):
+        legacy, _ = check_geometry(gdir, cfg)
+        for it in legacy.items:
+            c.add(f"beam: {it['check']}", it["ok"], **{k: v for k, v in it.items() if k not in ("check", "ok")})
+    return c, keep
+
+
 def write_standin(gdir: Path, cfg: dict) -> None:
     (gdir / "keep_parts").mkdir(parents=True, exist_ok=True)
     geom.to_trimesh(geom.make_space(cfg)).export(gdir / "space.stl")
@@ -131,23 +224,28 @@ def write_standin(gdir: Path, cfg: dict) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--geometry-dir", type=Path, default=REPO / "geometry")
+    ap.add_argument("--part", help="config/parts/<part>.yaml; checks geometry/<part> generically")
+    ap.add_argument("--geometry-dir", type=Path, help="default geometry/<part>, or geometry/ without --part")
     ap.add_argument("--write-standin", action="store_true")
     ap.add_argument("--config", action="append", default=[])
     a = ap.parse_args(argv)
     cfg = load_config(*a.config)
+    a.geometry_dir = a.geometry_dir or (geometry_dir(a.part) if a.part else REPO / "geometry")
     if a.write_standin:
         write_standin(a.geometry_dir, cfg)
 
-    checks, keep = check_geometry(a.geometry_dir, cfg)
+    if a.part:
+        checks, keep = check_part(a.geometry_dir, cfg, load_part(a.part))
+    else:
+        checks, keep = check_geometry(a.geometry_dir, cfg)
     if keep is not None and checks.ok:
         keep.export(a.geometry_dir / "keep.stl")
     (a.geometry_dir / "geometry_check.json").write_text(
         json.dumps({"ok": checks.ok, "checks": checks.items}, indent=2), encoding="utf-8")
 
     for it in checks.items:
-        extra = {k: (round(v, 6) if isinstance(v, float) else v) for k, v in it.items() if k not in ("check", "ok")}
-        print(f"{'PASS' if it['ok'] else 'FAIL'}  {it['check']:38s} {extra if extra else ''}")
+        extra = {k: (round(float(v), 6) if isinstance(v, float) else v) for k, v in it.items() if k not in ("check", "ok")}
+        print(f"{'PASS' if it['ok'] else 'FAIL'}  {it['check']:44s} {extra if extra else ''}")
     print(f"\n{'ALL CHECKS PASSED' if checks.ok else 'GEOMETRY CHECK FAILED'}"
           f"{'; wrote keep.stl' if checks.ok else ''}")
     return 0 if checks.ok else 1

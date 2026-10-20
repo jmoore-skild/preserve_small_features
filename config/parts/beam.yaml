@@ -1,0 +1,21 @@
+# Cantilever test beam, hand-modelled keeps (Phases 1-4). Per-part config (plan Phase 5).
+# Shared settings (TO, mesh, export tolerances, material default) stay in config/base.yaml; the beam's analytic
+# geometry keys there (beam, bore, keep, zones) are used by the Phase 1-4 code until Phase 6 makes it generic.
+onshape:
+  element_id: d4e16886d439739ab7f30a1f     # Part Studio 1 (document/workspace from config/onshape.yaml)
+
+keeps:
+  wall_thickness: 3.75   # mm, for hand-modelled KEEP_* parts (no Preserve region attribute)
+
+# Boundary conditions by region name (<ROLE>_<label>); `all` means every region with the right role.
+supports:
+  - type: fixed
+    regions: all          # FIX regions
+loads:
+  - type: remote_force
+    regions: all          # LOAD regions
+    magnitude: 200.0      # N
+    direction: [0, 0, -1]
+    behavior: deformable
+
+legacy_beam_checks: true  # also run the Phase 1 analytic checks (bore fits, coaxial keeps)

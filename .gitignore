@@ -16,3 +16,4 @@ results/*.png
 *.egg-info/
 geometry/keep_parts/
 geometry/*.json
+geometry/*/

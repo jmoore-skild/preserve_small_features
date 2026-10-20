@@ -66,6 +66,12 @@ onshape_export:
   stl_angle_tolerance: 2.0    # deg
   units: millimeter
 
+regions:                      # general geometry (Phases 5-8): preserve regions read from the model
+  surface_tol: 0.01           # mm, eps: S = SPACE surface with signed distance to the keep > eps
+  area_tol: 0.01              # relative, S area on the STL vs the Preserve region attribute (tessellation)
+  space_volume_tol: 0.001     # relative, SPACE STL vs Onshape mass-properties volume
+  overlap_tol: 0.001          # mm^3, FIX keeps vs LOAD keeps intersection
+
 rebuild:
   opt_space_volume_ratio: [0.3, 1.0]
   inside_space_min_fraction: 0.9

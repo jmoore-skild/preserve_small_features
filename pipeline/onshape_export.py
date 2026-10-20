@@ -1,10 +1,13 @@
-"""Export SPACE (STEP + fine STL) and KEEP_* (fine STL) from the TopoTestBeam Part Studio.
+"""Export SPACE (STEP + fine STL) and every KEEP_* part (fine STL) of one part's Part Studio.
 
-    python -m pipeline.onshape_export [--out geometry]
+    python -m pipeline.onshape_export --part <part> [--out geometry/<part>]
 
-Needs ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY in the environment and the IDs in config/onshape.yaml.
-Writes geometry/space.step, geometry/space.stl, geometry/keep_parts/KEEP_*.stl, geometry/export.json.
-Endpoints verified against skildai.onshape.com on 2026-10-15 (STL tolerance units: see onshape.yaml).
+The part's Part Studio is config/parts/<part>.yaml `onshape.element_id`; the document, workspace, host and STL
+parameters come from config/onshape.yaml. Keeps are found by name (KEEP_<ROLE>_<label>[_<k>]), not from the
+config. Needs ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY in the environment (or the Windows user environment).
+Writes space.step, space.stl, keep_parts/KEEP_*.stl, regions.json and export.json.
+Endpoints verified against skildai.onshape.com on 2026-10-15 (STL tolerance units: see onshape.yaml); the
+FeatureScript evaluate and mass-properties endpoints on 2026-10-20.
 """
 from __future__ import annotations
 
@@ -20,7 +23,8 @@ from urllib.parse import urlparse
 import requests
 import yaml
 
-from pipeline.config import REPO, bores, load_config
+from pipeline.config import REPO, geometry_dir, load_part
+from pipeline.regions import build_regions, save_regions
 
 ONSHAPE_CONFIG = REPO / "config" / "onshape.yaml"
 
@@ -65,6 +69,64 @@ def _dwe(oc: dict) -> str:
     return f"d/{oc['document_id']}/w/{oc['workspace_id']}/e/{oc['element_id']}"
 
 
+def api_key(name: str) -> str:
+    """From the process environment, else (Windows) the user environment, which a shell started before the
+    keys were set doesn't see."""
+    v = os.environ.get(name)
+    if v:
+        return v
+    if sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+                return winreg.QueryValueEx(k, name)[0]
+        except OSError:
+            pass
+    raise KeyError(name)
+
+
+def _fs_value(v):
+    """Decode a FeatureScript evaluation result (BTFSValue*) into plain Python."""
+    t = v.get("btType", "")
+    if t.endswith("BTFSValueArray"):
+        return [_fs_value(x) for x in v["value"]]
+    if t.endswith("BTFSValueMap"):
+        return {_fs_value(e["key"]): _fs_value(e["value"]) for e in v["value"]}
+    return v.get("value")
+
+
+KEEP_ATTRIBUTES_FS = """function(context is Context, queries is map) {
+  var out = [];
+  for (var b in evaluateQuery(context, qBodyType(qEverything(EntityType.BODY), BodyType.SOLID)))
+  {
+    for (var a in getAttributes(context, { "entities" : b }))
+      if (a is map && a.kind == "PreserveRegion")
+        out = append(out, a);
+  }
+  return out;
+}"""
+
+
+def keep_attributes(api: Onshape, oc: dict) -> dict[str, dict]:
+    """PreserveRegion attributes of the feature-made keeps, keyed by the keep name the feature gave them."""
+    r = api.post(f"partstudios/{_dwe(oc)}/featurescript", {"script": KEEP_ATTRIBUTES_FS, "queries": {}}).json()
+    if r.get("notices"):
+        raise RuntimeError(f"attribute evaluation reported: {[n.get('message') for n in r['notices']]}")
+    out = {}
+    for a in _fs_value(r["result"]):
+        if a["name"] in out:
+            raise RuntimeError(f"two keeps carry the attribute name {a['name']!r}")
+        out[a["name"]] = a
+    return out
+
+
+def onshape_volume_mm3(api: Onshape, oc: dict, part_id: str) -> float:
+    """Exact (B-rep) volume from Onshape's mass properties; the body comes back keyed "-all-" in m^3."""
+    bodies = api.get(f"partstudios/{_dwe(oc)}/massproperties", params={"partId": part_id}).json()["bodies"]
+    (body,) = bodies.values()
+    return float(body["volume"][0]) * 1e9
+
+
 def part_ids_by_name(api: Onshape, oc: dict) -> dict[str, str]:
     parts = api.get(f"parts/{_dwe(oc)}").json()
     out = {}
@@ -102,47 +164,73 @@ def export_step(api: Onshape, oc: dict, part_id: str, dest: Path, poll_s: float 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", type=Path, default=REPO / "geometry")
+    ap.add_argument("--part", required=True, help="config/parts/<part>.yaml")
+    ap.add_argument("--out", type=Path, help="default geometry/<part>")
     a = ap.parse_args(argv)
 
-    cfg = load_config()
+    part = load_part(a.part)
     oc = yaml.safe_load(ONSHAPE_CONFIG.read_text(encoding="utf-8"))
+    oc.update(part.get("onshape") or {})
     missing = [k for k in ("document_id", "workspace_id", "element_id") if not oc.get(k)]
     if missing:
-        print(f"config/onshape.yaml is missing: {', '.join(missing)}", file=sys.stderr)
+        print(f"Onshape IDs missing (config/onshape.yaml or the part's `onshape`): {', '.join(missing)}",
+              file=sys.stderr)
         return 2
     try:
-        api = Onshape(oc["base_url"], oc["api_version"], os.environ["ONSHAPE_ACCESS_KEY"],
-                      os.environ["ONSHAPE_SECRET_KEY"])
+        api = Onshape(oc["base_url"], oc["api_version"], api_key("ONSHAPE_ACCESS_KEY"),
+                      api_key("ONSHAPE_SECRET_KEY"))
     except KeyError as e:
         print(f"environment variable {e} is not set", file=sys.stderr)
         return 2
 
     ids = part_ids_by_name(api, oc)
-    wanted = ["SPACE"] + [b.keep_name for b in bores(cfg)]
-    absent = [n for n in wanted if n not in ids]
-    if absent:
-        print(f"parts not found in the Part Studio: {absent}; found {sorted(ids)}", file=sys.stderr)
+    if "SPACE" not in ids:
+        print(f"no part named SPACE in the Part Studio; found {sorted(ids)}", file=sys.stderr)
+        return 1
+    keeps = {n: pid for n, pid in ids.items() if n.startswith("KEEP_")}
+    ignored = sorted(set(ids) - set(keeps) - {"SPACE"})
+    if ignored:
+        print(f"ignoring parts that are neither SPACE nor KEEP_*: {ignored}")
+    attrs = keep_attributes(api, oc)
+    stray = sorted(set(attrs) - set(keeps))
+    if stray:
+        print(f"Preserve region attributes on parts that aren't named as keeps (renamed?): {stray}", file=sys.stderr)
+        return 1
+    try:
+        regions = build_regions(keeps, attrs, (part.get("keeps") or {}).get("wall_thickness"))
+    except ValueError as e:
+        print(f"keep regions: {e}", file=sys.stderr)
         return 1
 
-    out = a.out
-    (out / "keep_parts").mkdir(parents=True, exist_ok=True)
+    out = a.out or geometry_dir(a.part)
+    kdir = out / "keep_parts"
+    kdir.mkdir(parents=True, exist_ok=True)
+    for old in kdir.glob("KEEP_*.stl"):      # a keep deleted in Onshape must not survive from a previous export
+        old.unlink()
     print("exporting SPACE STEP ...")
     export_step(api, oc, ids["SPACE"], out / "space.step")
     print("exporting SPACE STL ...")
     export_stl(api, oc, ids["SPACE"], out / "space.stl")
-    for n in wanted[1:]:
+    for n in sorted(keeps):
         print(f"exporting {n} STL ...")
-        export_stl(api, oc, ids[n], out / "keep_parts" / f"{n}.stl")
+        export_stl(api, oc, keeps[n], kdir / f"{n}.stl")
+    volume = onshape_volume_mm3(api, oc, ids["SPACE"])
 
+    doc = {k: oc[k] for k in ("base_url", "api_version", "document_id", "workspace_id", "element_id")}
+    save_regions(out / "regions.json", regions, {"part": a.part, "document": doc})
     (out / "export.json").write_text(json.dumps({
         "source": "onshape",
+        "part": a.part,
         "exported_at": datetime.now(timezone.utc).isoformat(),
-        "document": {k: oc[k] for k in ("base_url", "api_version", "document_id", "workspace_id", "element_id")},
-        "part_ids": {n: ids[n] for n in wanted},
+        "document": doc,
+        "part_ids": {"SPACE": ids["SPACE"], **keeps},
+        "ignored_parts": ignored,
+        "space_volume_mm3": volume,
         "stl_params": oc["stl_params"],
     }, indent=2), encoding="utf-8")
-    print(f"done; run `python -m pipeline.geometry_check` next")
+    for r in regions:
+        print(f"  region {r.name:12s} {r.source:9s} t={r.wall_thickness} keeps={[k.part for k in r.keeps]}")
+    print(f"done; run `python -m pipeline.geometry_check --part {a.part}` next")
     return 0
 
 
