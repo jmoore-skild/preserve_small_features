@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. Phase 5 is built (2026-10-20): both beams pass the generic checks; the bracket awaits marking by Josh, then **Gate 3**. See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. Phase 5 done (2026-10-20): the beam, the re-marked beam and the bracket pass the generic checks. **At Gate 3.** See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -327,7 +327,7 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 **Test geometry.**
 
 - [x] **Beam, re-marked:** a second Part Studio with `TopoTestBeam` (`createKeeps` = false) and Preserve region on the 8 bores (t = 3.75 mm, m = 0.5 mm).
-- [ ] **Bracket:** `featurescript/TestBracket.fs`, an L-bracket that covers what the beam doesn't: holes on two non-parallel axes, a counterbored hole, a planar mating pad (split face), and a slot. Josh instances it and marks it with Preserve region in the GUI, which also tests the workflow. *(Feature written and instanced in Part Studio "Bracket" 2026-10-20; marking by Josh pending.)*
+- [x] **Bracket:** `featurescript/TestBracket.fs`, an L-bracket that covers what the beam doesn't: holes on two non-parallel axes, a counterbored hole, a planar mating pad (split face), and a slot. Josh instances it and marks it with Preserve region in the GUI, which also tests the workflow. *(Done 2026-10-20: Josh marked it with the defaults and found the feature intuitive.)*
 
 **Export (`onshape_export.py --part <part>`).**
 
@@ -632,3 +632,10 @@ Phase 4 setup:
   - Smart App Control blocks uv's venv launcher. `.venv` was rebuilt with the stdlib `python -m venv --upgrade`; don't run `uv venv` on it.
   - The Onshape MCP session expired mid-session and showed up as "unexpected error". REST with the API keys works as a fallback for writing Feature Studios (`POST featurestudios/...` with `sourceMicroversion`) and placing features.
 - **Next:** Josh marks the bracket (suggested: FIX on the two base holes plus the counterbored hole, LOAD on the upright holes and the mating pad, PASSIVE on the slot; t = 3 mm suits the 8 mm plates). Then run `onshape_export --part bracket` and `geometry_check --part bracket`, settle the bracket's loads in `config/parts/bracket.yaml`, and hold **Gate 3**.
+
+**2026-10-20 (later) — Bracket marked and checked; at Gate 3.** Commit `c95f32e`.
+
+- Josh marked the bracket with the defaults (t = 3.75, m = 0.5): FIX_1 on the two plain base holes, LOAD_1 on the two upright holes, PASSIVE_1 on the slot (4 faces), and PASSIVE_2 on the counterbored hole's lower bore and step face. The counterbore wall wasn't selected. He confirmed 150 N in +X as the test load. All checks pass (S areas within 0.012 %).
+- **His two PASSIVE regions both used label `1`,** which gave two parts named `KEEP_PASSIVE_1`. The feature now refuses a role + label already used by another Preserve region; it finds them through the attributes and suggests a free label. Claude relabelled the second one to `2`.
+- **The feature name template shows "Preserve <Role> <label>".** Features created before the change keep their stored names ("Preserve region N") unless Onshape shows the template name; Josh to confirm in the GUI.
+- **Josh's request:** anything to delete gets "(delete me)" appended. The empty duplicate studio is now "PreserveRegion (delete me)", renamed with `POST metadata/d/{did}/w/{wid}/e/{eid}` (Name property).
