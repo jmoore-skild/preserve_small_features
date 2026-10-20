@@ -10,6 +10,8 @@ import(path : "onshape/std/common.fs", version : "3095.0");
 //   SPACE                                  box minus all through-bores (the FE design geometry)
 //   KEEP_FIX_1..n, KEEP_LOAD_1..n,         solid full-thickness cylinders coaxial with each bore
 //   KEEP_PASSIVE_1..n                      (they overlap SPACE; that is intended)
+//                                          Keeps only when createKeeps is on (the default); off leaves
+//                                          SPACE alone for marking with the Preserve region feature.
 //
 // Bore numbering within a zone: X varies fastest, then Z, matching config/base.yaml.
 // Pattern positions: centre + (i - (count - 1) / 2) * pitch along each axis.
@@ -45,8 +47,14 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
         // Features
         annotation { "Name" : "Bore diameter" }
         isLength(definition.boreDiameter, LEN_4_5);
-        annotation { "Name" : "Keep diameter" }
-        isLength(definition.keepDiameter, LEN_12);
+        annotation { "Name" : "Create keep cylinders", "Default" : true,
+                     "Description" : "Off: SPACE only, to be marked with the Preserve region feature" }
+        definition.createKeeps is boolean;
+        if (definition.createKeeps)
+        {
+            annotation { "Name" : "Keep diameter" }
+            isLength(definition.keepDiameter, LEN_12);
+        }
 
         // FIX pattern (root): 2 x 2 about (20, 30), pitch 20
         annotation { "Name" : "FIX centre X" }
@@ -96,7 +104,7 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
         const T = definition.thickness;
         const r = definition.boreDiameter / 2;
         const R = definition.keepDiameter / 2;
-        if (R <= r)
+        if (definition.createKeeps && R <= r)
             throw regenError("Keep diameter must be larger than bore diameter.", ["keepDiameter", "boreDiameter"]);
 
         const zones = [
@@ -120,7 +128,7 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
                     const x = zone.cx + (i - (zone.nx - 1) / 2) * zone.px;
                     const z = zone.cz + (j - (zone.nz - 1) / 2) * zone.pz;
                     const name = zone.name ~ "_" ~ toString(k);
-                    if (x - R < 0 * meter || x + R > L || z - R < 0 * meter || z + R > H)
+                    if (definition.createKeeps && (x - R < 0 * meter || x + R > L || z - R < 0 * meter || z + R > H))
                         throw regenError("Keep zone " ~ name ~ " extends outside the envelope.");
                     centres = append(centres, { "name" : name, "x" : x, "z" : z });
                     k += 1;
@@ -154,6 +162,8 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
                 });
 
         // KEEP_*: solid full-thickness cylinders, created after the subtraction so they stay separate parts.
+        if (!definition.createKeeps)
+            return;
         for (var n = 0; n < size(centres); n += 1)
         {
             const c = centres[n];
@@ -171,7 +181,7 @@ export const topoTestBeam = defineFeature(function(context is Context, id is Id,
         }
     }, {
         "length" : 200 * millimeter, "height" : 60 * millimeter, "thickness" : 15 * millimeter,
-        "boreDiameter" : 4.5 * millimeter, "keepDiameter" : 12 * millimeter,
+        "boreDiameter" : 4.5 * millimeter, "createKeeps" : true, "keepDiameter" : 12 * millimeter,
         "fixCx" : 20 * millimeter, "fixCz" : 30 * millimeter, "fixNx" : 2, "fixNz" : 2,
         "fixPx" : 20 * millimeter, "fixPz" : 20 * millimeter,
         "loadCx" : 190 * millimeter, "loadCz" : 30 * millimeter, "loadNx" : 1, "loadNz" : 2,
