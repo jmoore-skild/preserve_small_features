@@ -32,9 +32,11 @@ Add it from the feature toolbar (Feature Studio `PreserveRegion` in the working 
 
 - **Faces to preserve:** the faces that must stay exact, all on `SPACE`.
 - **Role:** FIX, LOAD or PASSIVE.
-- **Label:** A–Z, 0–9 and `_` (default `1`). Role + label is the region's name, e.g. `FIX_1`, and the feature
-  shows it in the tree ("Preserve Fix 1"). Each Preserve region with the same role needs its own label; the
-  feature stops with an error, suggesting a free label, if one is already taken.
+- **Label:** leave it empty and the feature numbers the region itself: the first FIX region is `FIX_1`, the
+  next `FIX_2`, and so on. You can type your own instead (A–Z, 0–9 and `_`, e.g. `TIP`); it must not be used by
+  another region of the same role. Role + label is the region's name, and the feature tree shows it ("Preserve
+  Fix 1"). Automatic numbers follow the feature order, so deleting an earlier region renumbers later ones: give
+  a region a typed label if the part YAML refers to it by name.
 - **Wall thickness t (into the material):** the wall around the faces that must stay solid. This is also the
   Exclusion Thickness the optimizer keeps frozen.
 - **Void margin m (into the void):** default 0.5 mm. It makes the keep straddle the faces, so the faces in the

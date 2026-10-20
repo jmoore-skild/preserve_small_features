@@ -39,7 +39,7 @@ const ROLE_COLOURS = {
 
 const ROLE_TITLES = { PreserveRole.FIX : "Fix", PreserveRole.LOAD : "Load", PreserveRole.PASSIVE : "Passive" };
 
-// The tree shows e.g. "Preserve Fix 1" (role and label) unless the user renames the feature.
+// The tree shows e.g. "Preserve Fix 1": role and the resolved label, which make the feature's name unique.
 annotation { "Feature Type Name" : "Preserve region",
              "Feature Name Template" : "Preserve #roleTitle #labelText",
              "Feature Type Description" : "Faces that topology optimization must keep exact. Creates KEEP_<ROLE>_<label> solids straddling the faces (wall t into the material, margin m into the void)." }
@@ -52,7 +52,7 @@ export const preserveRegion = defineFeature(function(context is Context, id is I
         annotation { "Name" : "Role", "Default" : PreserveRole.FIX }
         definition.role is PreserveRole;
 
-        annotation { "Name" : "Label", "Default" : "1", "Description" : "A-Z, 0-9 and _ only" }
+        annotation { "Name" : "Label (empty = next free number)", "Default" : "", "Description" : "A-Z, 0-9 and _ only. Leave empty to number this region automatically." }
         definition.label is string;
 
         annotation { "Name" : "Wall thickness (into material)", "Description" : "Wall that must stay solid; also the Exclusion Thickness" }
@@ -63,11 +63,40 @@ export const preserveRegion = defineFeature(function(context is Context, id is I
     }
     {
         setFeatureComputedParameter(context, id, { "name" : "roleTitle", "value" : ROLE_TITLES[definition.role] });
+        definition.label = resolveLabel(context, definition.role, definition.label);
         setFeatureComputedParameter(context, id, { "name" : "labelText", "value" : definition.label });
         preserveRegionImpl(context, id, definition);
-    }, { "role" : PreserveRole.FIX, "label" : "1", "wallThickness" : 3.75 * millimeter, "voidMargin" : 0.5 * millimeter });
+    }, { "role" : PreserveRole.FIX, "label" : "", "wallThickness" : 3.75 * millimeter, "voidMargin" : 0.5 * millimeter });
 
-/** Body of the feature, separate so a test harness can call it with its own geometry. */
+/**
+ * The region label to use: the given one after validation, or, when it is empty, the lowest number not yet
+ * used by an earlier Preserve region of the same role. Role + label names the region and its keep parts, so it
+ * must be unique. Earlier Preserve regions are found through their attributes, which (unlike part names) are
+ * readable during regeneration. An automatic label depends on feature order: deleting an earlier region of the
+ * same role renumbers the later automatic ones.
+ */
+export function resolveLabel(context is Context, role is PreserveRole, label is string) returns string
+{
+    const roleName = toString(role);
+    var used = {};
+    for (var a in getAttributes(context, { "entities" : qEverything(EntityType.BODY) }))
+    {
+        if (a is map && a.kind == ATTRIBUTE_KIND && a.role == roleName)
+            used[a.label] = true;
+    }
+    var free = 1;
+    while (used[toString(free)] == true)
+        free += 1;
+    if (label == "")
+        return toString(free);
+    if (!match(label, "[A-Z0-9_]+").hasMatch)
+        throw regenError("Label '" ~ label ~ "' is invalid: use A-Z, 0-9 and _ only, or leave it empty.", ["label"]);
+    if (used[label] == true)
+        throw regenError("Another Preserve region already uses " ~ roleName ~ " " ~ label ~ ". Use a different label (e.g. " ~ free ~ ") or leave it empty.", ["label"]);
+    return label;
+}
+
+/** Body of the feature, separate so a test harness can call it with its own geometry. Expects a resolved label. */
 export function preserveRegionImpl(context is Context, id is Id, definition is map)
 {
     const faces = definition.faces;
@@ -80,9 +109,6 @@ export function preserveRegionImpl(context is Context, id is Id, definition is m
         throw regenError("Faces must all be on one part (they span " ~ size(owners) ~ ").", ["faces"], faces);
 
     const label = definition.label;
-    if (!match(label, "[A-Z0-9_]+").hasMatch)
-        throw regenError("Label '" ~ label ~ "' is invalid: use A-Z, 0-9 and _ only.", ["label"]);
-
     const role = definition.role;
     const roleName = toString(role);
     const t = definition.wallThickness;
@@ -90,22 +116,6 @@ export function preserveRegionImpl(context is Context, id is Id, definition is m
 
     // Whether the faces are on the part named SPACE is checked by the exporter: getProperty(NAME) is not
     // available while a feature regenerates (it always came back empty).
-
-    // Role + label names the region and its keep parts, so it must be unique. Earlier Preserve regions are
-    // found through their attributes, which (unlike names) are readable during regeneration.
-    var used = {};
-    for (var a in getAttributes(context, { "entities" : qEverything(EntityType.BODY) }))
-    {
-        if (a is map && a.kind == ATTRIBUTE_KIND && a.role == roleName)
-            used[a.label] = true;
-    }
-    if (used[label] == true)
-    {
-        var free = 1;
-        while (used[toString(free)] == true)
-            free += 1;
-        throw regenError("Another Preserve region already uses " ~ roleName ~ " " ~ label ~ ". Give this one a different label (e.g. " ~ free ~ ").", ["label"]);
-    }
 
     const groups = connectedComponents(context, faces, AdjacencyType.EDGE);
     const nGroups = size(groups);
