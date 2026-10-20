@@ -37,7 +37,11 @@ const ROLE_COLOURS = {
     PreserveRole.PASSIVE : color(0.55, 0.55, 0.55, 0.55)
 };
 
+const ROLE_TITLES = { PreserveRole.FIX : "Fix", PreserveRole.LOAD : "Load", PreserveRole.PASSIVE : "Passive" };
+
+// The tree shows e.g. "Preserve Fix 1" (role and label) unless the user renames the feature.
 annotation { "Feature Type Name" : "Preserve region",
+             "Feature Name Template" : "Preserve #roleTitle #labelText",
              "Feature Type Description" : "Faces that topology optimization must keep exact. Creates KEEP_<ROLE>_<label> solids straddling the faces (wall t into the material, margin m into the void)." }
 export const preserveRegion = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
@@ -58,6 +62,8 @@ export const preserveRegion = defineFeature(function(context is Context, id is I
         isLength(definition.voidMargin, MARGIN_BOUNDS);
     }
     {
+        setFeatureComputedParameter(context, id, { "name" : "roleTitle", "value" : ROLE_TITLES[definition.role] });
+        setFeatureComputedParameter(context, id, { "name" : "labelText", "value" : definition.label });
         preserveRegionImpl(context, id, definition);
     }, { "role" : PreserveRole.FIX, "label" : "1", "wallThickness" : 3.75 * millimeter, "voidMargin" : 0.5 * millimeter });
 
@@ -84,6 +90,22 @@ export function preserveRegionImpl(context is Context, id is Id, definition is m
 
     // Whether the faces are on the part named SPACE is checked by the exporter: getProperty(NAME) is not
     // available while a feature regenerates (it always came back empty).
+
+    // Role + label names the region and its keep parts, so it must be unique. Earlier Preserve regions are
+    // found through their attributes, which (unlike names) are readable during regeneration.
+    var used = {};
+    for (var a in getAttributes(context, { "entities" : qEverything(EntityType.BODY) }))
+    {
+        if (a is map && a.kind == ATTRIBUTE_KIND && a.role == roleName)
+            used[a.label] = true;
+    }
+    if (used[label] == true)
+    {
+        var free = 1;
+        while (used[toString(free)] == true)
+            free += 1;
+        throw regenError("Another Preserve region already uses " ~ roleName ~ " " ~ label ~ ". Give this one a different label (e.g. " ~ free ~ ").", ["label"]);
+    }
 
     const groups = connectedComponents(context, faces, AdjacencyType.EDGE);
     const nGroups = size(groups);

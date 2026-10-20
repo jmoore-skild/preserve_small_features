@@ -1,5 +1,6 @@
-# Test L-bracket (featurescript/TestBracket.fs), marked with Preserve region in the GUI.
-# Draft for Gate 3: the BCs assume the base holes are FIX and the upright holes (and pad) are LOAD.
+# Test L-bracket (featurescript/TestBracket.fs), marked by Josh with Preserve region in the GUI (defaults:
+# t = 3.75 mm, m = 0.5 mm): FIX on the two plain base holes, LOAD on the two upright holes, PASSIVE on the slot
+# (PASSIVE_1) and the counterbored hole (PASSIVE_2).
 onshape:
   element_id: 71998051ac301addb3814c18     # Part Studio "Bracket"
 
@@ -9,6 +10,6 @@ supports:
 loads:
   - type: remote_force
     regions: all
-    magnitude: 150.0      # N, placeholder
+    magnitude: 150.0      # N, test load (Josh, 2026-10-20)
     direction: [1, 0, 0]  # pulls the upright away from the base: bends the inner corner
     behavior: deformable
