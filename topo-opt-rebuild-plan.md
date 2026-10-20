@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. Phase 5 done (2026-10-20): the beam, the re-marked beam and the bracket pass the generic checks. **At Gate 3.** See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. Phase 5 done and **Gate 3 passed** (2026-10-20). **Next: Phase 6.** See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -641,3 +641,12 @@ Phase 4 setup:
 - **Josh's request:** anything to delete gets "(delete me)" appended. The empty duplicate studio is now "PreserveRegion (delete me)", renamed with `POST metadata/d/{did}/w/{wid}/e/{eid}` (Name property).
 
 **2026-10-20 (later) — Preserve region labels are automatic.** The label defaults to empty, meaning the lowest number not yet used by an earlier region of the same role; a typed label is still validated and must be unique. The tree name comes from the template "Preserve <Role> <label>". Josh couldn't rename the features (a template-named feature takes its name from the template), and the existing ones kept their stored "Preserve region N" names. The bracket and Beam marked features now have automatic labels and empty stored names (set over REST); their parts are unchanged. Josh to confirm the tree shows "Preserve Fix 1" and so on.
+
+**2026-10-20 — Gate 3 passed.** Josh confirmed that the feature tree shows the template names, the feature is intuitive to use, and the bracket's test load is 150 N in +X. He asked for the naming fixes before Phase 6; they're done.
+
+Phase 6 starting points:
+- Run Phase 6 in a new session. Read the Phase 6 checklist and the Phase 5 entries above first.
+- `geometry/<part>/` holds verified exports for `beam`, `beam_marked` and `bracket` (gitignored). Re-create one with `python -m pipeline.onshape_export --part <part> && python -m pipeline.geometry_check --part <part>`. The STEP step can take about 10 minutes.
+- `pipeline/regions.py` has the Region model and `surface_in_keep`, ready for face matching and the generic metrics.
+- Phase 4 run artifacts are still under `runs/<run_id>/`. Move them to `runs/beam/` when the layout changes.
+- Python: use `.venv/Scripts/python.exe` (stdlib launcher) and `python -m pytest`.
