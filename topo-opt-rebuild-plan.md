@@ -1,6 +1,6 @@
 # Exclude-and-Rebuild Topology Optimization: Cantilever Evaluation Plan
 
-**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written and awaits Josh's review. See Section 13.
+**Status:** Phases 1–3 complete; Gate 1 passed 2026-10-15. Phase 3 (smoke test) finished 2026-10-16: all h = 4 runs solved, rebuilt, measured and validated, and the BC-equivalence check passes. Gate 2 passed 2026-10-16. Phase 4 done 2026-10-16: `results/REPORT.md` is written. Phases 5–8, which extend the method to general geometry that Josh models in Onshape, were planned 2026-10-20. **Next: Phase 5.** See Section 13.
 **Owner:** Josh. **Executor:** Claude Code, with Josh at the gates.
 
 ## 0. How to use this plan
@@ -71,6 +71,16 @@ Intersecting last means bores and outer faces always come from one tessellation 
 | Split-body marking (M1) dropped | M3 covers the same need natively and avoids the unknowns around multi-body export and contact. |
 | No print check | Out of scope. |
 | Validation uses TetGen (or gmsh) tet meshes solved with PyMAPDL | Fully scriptable, with BCs matched to the TO model. |
+
+**General geometry (Phases 5–8), agreed 2026-10-20:**
+
+| Decision | Rationale |
+|---|---|
+| Josh models each part in Onshape: one part named `SPACE` plus `KEEP_<ROLE>_<label>` parts, with roles FIX, LOAD and PASSIVE | The exporter already selects parts by name, and the role in the name makes the model readable in the GUI. |
+| Keep solids come from a custom "Preserve region" feature (faces + wall thickness + role). Hand-modelled `KEEP_*` parts are also allowed. | Selecting the faces that must stay exact is the natural CAD step, and it works for any shape, not just Y-axis bores. |
+| Exclusion and BC faces are found geometrically (the `SPACE` faces inside a keep), not named | Onshape's STEP export carries no face names, and nothing extra has to be named. |
+| Loads, supports, material and TO overrides live in a YAML file per part | Easy to change, and versioned alongside the runs. |
+| Packaging: a Claude Code skill, shipped as a plugin for teammates. No new MCP server. | The pipeline is a local CLI that needs Ansys licences; what's missing is the workflow knowledge. The existing Onshape MCP covers the FeatureScript work. |
 
 ## 4. Parameters (`config/base.yaml`)
 
@@ -280,6 +290,137 @@ The goal is to validate the measuring tools before they measure anything real.
   - predictions vs outcomes (Section 10),
   - a recommendation for production use.
 
+### Phases 5–8 — General geometry
+
+The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every beam-specific step goes through `config.bores()`: `geometry_check`, the rebuild probes, `measure`, `run_mechanical.bore_selection` / `zone_x_range`, and `validate`'s `radial_to_axes`, `bore_nodes` and hard-coded `pilot`. Phases 5–8 replace that with regions read from the model, keeping the method itself unchanged: M3 exclusion, `final = (opt ∪ keep) ∩ space`, and validation of the rebuilt part.
+
+**Region definitions** (used by every phase below). For a region with keep solid K and a small tolerance ε (`regions.surface_tol`, about 0.01 mm):
+
+- **Exclusion faces S:** the parts of `SPACE`'s surface that lie strictly inside K (signed distance > ε). They carry the M3 exclusion and the BCs. On the beam these are the bores.
+- **Preserved surface P:** the parts of `SPACE`'s surface inside or on K (≥ −ε). This is everything the rebuild reproduces exactly. P contains S plus flush areas such as the beam's seat annuli.
+
+### Phase 5 — Preserve region feature, export and checks
+
+**FeatureScript.** Written to the working document through the Onshape MCP (which uses Josh's API allocation; tell him before starting).
+
+- [ ] `featurescript/PreserveRegion.fs`, Feature Studio `PreserveRegion`. Parameters:
+  - faces (on one part),
+  - role (FIX / LOAD / PASSIVE),
+  - label (A–Z, 0–9, `_`; default `1`),
+  - wall thickness t into the material (this is also the Exclusion Thickness),
+  - void margin m into the void (default 0.5 mm).
+- [ ] Build the keep with `opThicken`: t into the material and m into the void *(verify the parameter names and which side each thickness goes)*. Make one body per connected face group, named `KEEP_<ROLE>_<label>`, or `KEEP_<ROLE>_<label>_<k>` when there are several.
+- [ ] The void margin is required. The keep must straddle every preserved face so that the face in `final` comes only from `SPACE`'s tessellation (Section 1). A keep face lying on a bore would put two tessellations of the same curved surface into the boolean. The beam's solid cylinders straddle by construction.
+- [ ] Attach an attribute to each keep body: role, label, t, m, the selected face count and their total area. The exporter reads it, and the face matching in Phase 6 is checked against it.
+- [ ] Fail in the feature with a clear message when faces span more than one part, when the label is invalid, or when the thicken fails (for example m ≥ a bore radius).
+- [ ] `TopoTestBeam`: add a `createKeeps` boolean (default true) so the beam can also be marked with the new feature.
+
+**Modelling guide.**
+
+- [ ] `docs/modelling.md`, for Josh and teammates:
+  - model `SPACE` with every small feature cut in;
+  - split a face to preserve only part of it (for example a washer seat);
+  - use one Preserve region per functional interface;
+  - how to choose t (the wall that must stay solid; M3 used the keep wall, 3.75 mm) and m;
+  - mistakes to avoid, such as FIX and LOAD keeps touching.
+
+**Test geometry.**
+
+- [ ] **Beam, re-marked:** a second Part Studio with `TopoTestBeam` (`createKeeps` = false) and Preserve region on the 8 bores (t = 3.75 mm, m = 0.5 mm).
+- [ ] **Bracket:** `featurescript/TestBracket.fs`, an L-bracket that covers what the beam doesn't: holes on two non-parallel axes, a counterbored hole, a planar mating pad (split face), and a slot. Josh instances it and marks it with Preserve region in the GUI, which also tests the workflow.
+
+**Export (`onshape_export.py --part <part>`).**
+
+- [ ] Per-part config `config/parts/<part>.yaml`: Onshape IDs, material, supports and loads by region name, TO overrides, and t for any hand-modelled keeps. The beam moves to `config/parts/beam.yaml` (plus `beam_marked.yaml`); `base.yaml` keeps only the shared settings.
+- [ ] Find `SPACE` and every `KEEP_*` by name; don't take the list from the config.
+- [ ] Read the keep attributes through the FeatureScript evaluate endpoint *(verify)*, and write each region's role, label, t, m, face count and area to `geometry/<part>/regions.json`. A hand-modelled keep without an attribute takes t from the part YAML; if there's no t there either, fail.
+- [ ] Get `SPACE`'s exact volume from Onshape's mass properties *(verify endpoint)*.
+
+**Checks (`geometry_check.py`, generic).** All must pass:
+
+- [ ] The `SPACE` STL volume is within ±0.1 % of the Onshape mass-properties volume. This replaces the beam's analytic formula.
+- [ ] All STLs are watertight volumes.
+- [ ] Names are unique and well formed. There is at least one FIX and one LOAD region, and every region the part YAML names exists.
+- [ ] Each keep straddles its faces: K ∩ `SPACE`, K − `SPACE` and S are all non-empty.
+- [ ] Per region, the area of S measured on the STL matches the attribute's face area within 1 % (tessellation tolerance).
+- [ ] No FIX keep overlaps a LOAD keep.
+- [ ] `keep.stl` is the union of all `KEEP_*` parts, as one manifold.
+- [ ] The original beam (hand-modelled keeps, t from YAML) passes.
+
+**Gate 3:** Josh reviews the feature in the GUI on both parts (how it feels to use, names, error messages), `docs/modelling.md`, and the `geometry_check` output.
+
+### Phase 6 — Generic pipeline and regression
+
+**Mechanical (`run_mechanical.py`).**
+
+- [ ] Face matching: sample points on every CAD face of `SPACE` (the face's mesh nodes after meshing *(verify the MeshData API)*). Assign a face to a region when none of its points is outside K by more than ε and most are strictly inside. A face that matches two regions is an error.
+- [ ] Per region, the matched face count and area must equal the attribute's (area within 0.1 %).
+- [ ] Build one named selection per region (`NS_<ROLE>_<label>`) from the matched face IDs. This replaces the radius worksheet.
+- [ ] BCs from the part YAML: fixed supports on FIX regions, and one remote force (vector, behaviour) per load entry on its LOAD regions. One static load case; several load cases are out of scope for now.
+- [ ] M3 exclusion on all S faces, with Exclusion Thickness = each region's t. If regions differ in t: can Mechanical take several exclusion regions, each with its own thickness? *(verify)* If not, fail with a message asking for one t per part.
+- [ ] Keep M0 (All Boundary Conditions, 2h) for comparison runs.
+
+**Rebuild (`rebuild.py`).** Input checks and the boolean are already generic.
+
+- [ ] Replace the bore probes with overlap volumes: each region's K ∩ `SPACE` belongs to the component of `final` that holds most of its volume. The main body holds every FIX and LOAD region. Failure rules are unchanged.
+
+**Metrics (`measure.py`).** Volume bookkeeping, stiffness and cost stay as in Section 9.
+
+| Metric | How | Pass |
+|---|---|---|
+| Preserved-surface deviation | Per region: sample P at about 0.1 mm spacing, then take the distance from each sample to the surface of `final` (or raw `opt`). Report the max, the 99th percentile, and the fraction of samples beyond the tolerance. | ≤ 0.02 mm with no samples beyond, for rebuilt runs |
+| Connectivity, PASSIVE attachment | From the rebuild report | As in Section 9 |
+| Seam necks | Distance bands outside each K inside `SPACE`, in 0.5 mm steps up to the smaller of 2h and half the gap to the nearest other keep. Per band: the fraction of `SPACE`'s band volume that `final` keeps (grid sampling). | Flag dips > 25 % |
+
+- [ ] Implement these metrics. On the beam, the bands are the existing cylindrical shells, so the seam results should match the old metric.
+- [ ] Keep the bore-fit and seat metrics running on the beam until Gate 4 so the two can be compared.
+
+**Validation (`validate.py`).**
+
+- [ ] BC nodes: FE nodes within the tolerance (rename `fix_radial_tol` to `bc_surface_tol`) of the S triangles of the FIX and LOAD regions.
+- [ ] Read the pilot location and force vector from the run's `mechanical.json`, not `validate.pilot`.
+- [ ] Converge on pilot displacement along the load direction.
+- [ ] Measure the stress exclusion bands as distance to K. Stresses stay indicative only.
+- [ ] Rename `bore_size` to `feature_size`; Prime's curvature sizing is already generic.
+
+**Layout and tests.**
+
+- [ ] Use `geometry/<part>/`, `runs/<part>/<run_id>/` and `config/parts/`; `run_matrix` and `collect` take `--part`. Update Section 6 and the README.
+- [ ] Port the Phase 2 synth tests to the generic code, with the same planted defects and acceptance.
+- [ ] Orientation test: apply an arbitrary rotation to a synth case (`space`, `keep`, `opt`); every metric must stay the same within its tolerance.
+
+**Regression and first general runs.** Record them in `results/general_geometry.md`.
+
+- [ ] Original beam through the generic pipeline, M3_h4 and M3_h2. Requirements:
+  - face matching selects exactly the 8 bores;
+  - element count, iterations and final volume match Phase 4;
+  - specific stiffness is within 0.5 %;
+  - fidelity passes.
+- [ ] Re-marked beam, M3_h2: same tolerances, against the original-beam run.
+- [ ] Bracket, end to end: M3 at h = 2 and 4 + rebuild + measure + validate, plus M0 at h = 2 to compare raw against rebuilt on off-axis holes.
+
+**Gate 4:** Josh reviews the regression and the bracket results, decides whether to retire the beam-only metrics, and picks the settings for his own part.
+
+### Phase 7 — Skill and plugin
+
+- [ ] Project skill `.claude/skills/topo-rebuild/SKILL.md` (check the current skill format first). It covers:
+  - the modelling contract, linking `docs/modelling.md`;
+  - the command order, and where to stop for review (after `geometry_check`, and after the first TO run);
+  - the recommended settings (M3 + rebuild at h = 2; validate the rebuilt part);
+  - run times, and running solves in the background;
+  - licences (take every HPC pack the pool grants; Prime and MAPDL share one seat) and the Onshape API allocation;
+  - how to read `metrics.json`, `validation.json` and the report.
+- [ ] Test it from a fresh session on the bracket: given only "run the bracket", the session should run the whole chain correctly.
+- [ ] Plugin for teammates: the skill plus the Onshape MCP config, with setup notes (Ansys 2026 R1, Python 3.12 venv, API keys). Josh chooses where it's published.
+
+### Phase 8 — Josh's first real part
+
+- [ ] Josh models it following `docs/modelling.md`. The part YAML comes from Josh's description of the loads (Claude can draft it).
+- [ ] Run it through the skill from a fresh session: M3 + rebuild at h = 2, then validate.
+- [ ] Fix anything the skill or the guide got wrong.
+
+If Josh wants results on his part before the skill exists, Phase 8 can start right after Gate 4.
+
 ## 8. Rebuild specification (`rebuild.py`)
 
 **Inputs:** `runs/<id>/opt.stl` (from Ansys), `geometry/keep.stl`, `geometry/space.stl`.
@@ -464,4 +605,13 @@ Phase 4 setup:
 - **Timing probe:** M3_h2 has 80 242 elements, a 211 s TO solve and 18 iterations, on 24 cores with 1.7 GB of MAPDL memory. Projected h = 1: about 640 k elements, roughly 20–40 min and about 14 GB, so the h = 1 reference is affordable. **Reference = h = 1** (`M3_h1`), started 2026-10-16.
 
 **2026-10-16 (evening) — Phase 4 done.** M3_h1 (reference) has 428 171 elements and took a 385 s TO solve on 24 cores; its features are exact, and its specific stiffness is 1 654 N/mm/kg. `pipeline/collect.py` writes `results/summary.csv` and three plots. `results/REPORT.md` leads with feature preservation: every rebuilt run is exact, and raw M0 is not. Its recommendation is M3 + rebuild at h = 2 (−2.3 % vs reference at half the TO time). M3_h4 misses the 10 % payoff criterion by 1.6 points.
+
+**2026-10-20 — Phases 5–8 planned (general geometry).** Josh wants to use the method on more complex parts that he models himself in Onshape. The agreed decisions are at the end of Section 3; the work is Phases 5–8 in Section 7.
+
+- **Start at Phase 5** in a new session. The Onshape MCP is needed for the FeatureScript; tell Josh that it uses his API allocation.
+- **Not decided yet:**
+  - the exact layout (`config/parts/`, `geometry/<part>/`, `runs/<part>/`) is a proposal;
+  - whether Mechanical can carry several exclusion thicknesses (Phase 6);
+  - where the plugin is published (Phase 7).
+- **Phase 4 run artifacts** stay under `runs/<run_id>/`. Move them to `runs/beam/` when the layout changes, so the regression can read them.
 
