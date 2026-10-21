@@ -4,15 +4,44 @@ Plan: [topo-opt-rebuild-plan.md](topo-opt-rebuild-plan.md). Shared parameters li
 
 ## Setup
 
+What you need (Windows):
+
+1. **Ansys 2026 R1** (Mechanical, MAPDL, Prime) with `AWP_ROOT261` set, and access to the licence pool. The pool
+   grants one `ansys` seat, so only one Ansys step runs at a time.
+2. **Python 3.12** and [uv](https://docs.astral.sh/uv/). Create the environment:
+
+   ```powershell
+   uv venv --python 3.12 .venv
+   uv pip install --python .venv/Scripts/python.exe -e ".[dev]"
+   .venv\Scripts\python.exe -m pytest      # ~3 min; checks the install
+   ```
+
+   If Smart App Control blocks uv's venv launcher, use `py -3.12 -m venv .venv` instead and keep the
+   `uv pip install` line. Python 3.12 is pinned: PyMechanical's pythonnet and the manifold3d wheels are not
+   reliable on 3.14 yet.
+3. **Onshape API keys** (Onshape developer portal → API keys), set as *user* environment variables
+   `ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY`. Every export uses the company's API allocation.
+4. **The Preserve region feature** in your Onshape document: Custom features → Add custom features → this
+   project's working document (a released version). [docs/modelling.md](docs/modelling.md) explains how to model
+   and mark a part.
+
+**Claude Code:** the project skill `topo-rebuild` ([.claude/skills/topo-rebuild/](.claude/skills/topo-rebuild/))
+loads when Claude Code runs in this repo. Ask it to "run <part>" and it runs the chain below, stopping for review
+after the geometry check and after the first run.
+
+**Optional, Onshape MCP server:** it is only needed if you want Claude to write or edit FeatureScript (the
+Preserve region feature and the test parts were written through it). It is not used by the pipeline. To add it
+for yourself:
+
 ```powershell
-uv venv --python 3.12 .venv
-uv pip install --python .venv -e ".[dev]"
-.venv\Scripts\activate
+claude mcp add-json --scope user onshape '{"type":"http","url":"https://fs-mcp.labs.onshape.app/mcp","oauth":{"authServerMetadataUrl":"https://mcp-auth.labs.onshape.app/.well-known/oauth-authorization-server"}}'
 ```
 
-Python 3.12 is pinned: PyMechanical's pythonnet and the manifold3d wheels are not reliable on 3.14 yet. Validation meshing uses Ansys Prime through `ansys-meshing-prime`, pinned to the client that matches the installed Ansys release. Point queries (inside tests, distances) use libigl; trimesh's own are too slow without Embree.
+Then log in with `/mcp` in Claude Code. Its calls also use the company's Onshape API allocation.
 
-Smart App Control blocks uv's venv launcher on Josh's machine: if `uv venv` fails, use `python -m venv .venv` and `uv pip install --python .venv/Scripts/python.exe -e ".[dev]"`.
+Validation meshing uses Ansys Prime through `ansys-meshing-prime`, pinned to the client that matches the
+installed Ansys release. Point queries (inside tests, distances) use libigl; trimesh's own are too slow without
+Embree.
 
 ## Commands
 

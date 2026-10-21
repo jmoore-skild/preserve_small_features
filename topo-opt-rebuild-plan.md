@@ -423,7 +423,8 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
   - licences (take every HPC pack the pool grants; Prime and MAPDL share one seat) and the Onshape API allocation;
   - how to read `metrics.json`, `validation.json` and the report.
 - [ ] Test it from a fresh session on the bracket: given only "run the bracket", the session should run the whole chain correctly.
-- [ ] Plugin for teammates: the skill plus the Onshape MCP config, with setup notes (Ansys 2026 R1, Python 3.12 venv, API keys). Josh chooses where it's published.
+- [x] Plugin for teammates: the skill plus the Onshape MCP config, with setup notes (Ansys 2026 R1, Python 3.12 venv, API keys). Josh chooses where it's published.
+  *Decided 2026-10-21: no plugin. The skill only works inside this repo (the pipeline code lives here), so it ships as the project skill, and cloning the repo is the install. The Onshape MCP isn't bundled: the pipeline exports over REST with the API keys, and the MCP is only needed to edit FeatureScript. The README's Setup section covers Ansys, the venv, the keys, adding Preserve region to another document, and the optional MCP command.*
 
 ### Phase 8 — Josh's first real part
 
@@ -702,3 +703,8 @@ re-measured. The Phase 1 analytic geometry checks (`legacy_beam_checks`) are sep
 Decisions 2 and 3 (settings and load for "his part") are open. Josh asked whether "his part" meant the bracket. It
 means Phase 8's first real part, which he models himself; Claude asked what that part is and how it is held and
 loaded. If there is no part yet, Phase 7 can come first.
+
+**2026-10-21 — Phase 7 in progress.** The project skill `topo-rebuild` is written (commit `cfecbb7`), and the
+README has teammate setup notes. No plugin: Josh pointed out the Onshape MCP is standalone, and the pipeline
+doesn't use it. Remaining: Josh tests the skill from a fresh session with "run the bracket". Teammates also need
+a released version of the working document so they can add Preserve region as a custom feature.
