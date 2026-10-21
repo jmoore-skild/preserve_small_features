@@ -422,7 +422,8 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
   - run times, and running solves in the background;
   - licences (take every HPC pack the pool grants; Prime and MAPDL share one seat) and the Onshape API allocation;
   - how to read `metrics.json`, `validation.json` and the report.
-- [ ] Test it from a fresh session on the bracket: given only "run the bracket", the session should run the whole chain correctly.
+- [x] Test it from a fresh session on the bracket: given only "run the bracket", the session should run the whole chain correctly. *(done 2026-10-21: fresh `M3_h2` reproduces Phase 6; the `onshape.url` export path is still untested end to end)*
+- [x] Teammates' copy of the feature: Feature Studio `Preserve region` in the document "Topology Optimization Region Preservation", version V1. *(done 2026-10-21)*
 - [x] Plugin for teammates: the skill plus the Onshape MCP config, with setup notes (Ansys 2026 R1, Python 3.12 venv, API keys). Josh chooses where it's published.
   *Decided 2026-10-21: no plugin. The skill only works inside this repo (the pipeline code lives here), so it ships as the project skill, and cloning the repo is the install. The Onshape MCP isn't bundled: the pipeline exports over REST with the API keys, and the MCP is only needed to edit FeatureScript. The README's Setup section covers Ansys, the venv, the keys, adding Preserve region to another document, and the optional MCP command.*
 
@@ -708,3 +709,18 @@ loaded. If there is no part yet, Phase 7 can come first.
 README has teammate setup notes. No plugin: Josh pointed out the Onshape MCP is standalone, and the pipeline
 doesn't use it. Remaining: Josh tests the skill from a fresh session with "run the bracket". Teammates also need
 a released version of the working document so they can add Preserve region as a custom feature.
+
+**2026-10-21 — Phase 7 done.** Josh tested the skill from a fresh session with "run the bracket". The session used
+the existing export (no re-export, so no API calls), ran `geometry_check` (all 26 checks pass) and stopped for
+review, then ran a fresh `M3_h2` (Mechanical 215 s, validate 328 s) and reported fidelity first. The results
+reproduce Phase 6: preserved surfaces within 1.7e-8 mm, one body with both PASSIVE regions attached, no seam
+flags, specific stiffness 287.6 N/mm/kg (Phase 6: 287.62), model-form gap +0.7 %. Not exercised: the
+`onshape.url` export path (`bracket.yaml` still uses `element_id`).
+
+Teammates' copy of the feature: Josh created the document "Topology Optimization Region Preservation"
+(`ece039374f3dbe89ff3dcd03`). Claude wrote `featurescript/PreserveRegion.fs` into its Feature Studio
+`Preserve region` (`f6ae7b3fd3fb7b66f0d32fb1`) over REST, since the MCP session had expired, and created
+version V1 (`f194d48da7d75db313661fde`). The README and `docs/modelling.md` now point at it. When the feature
+changes: edit the repo file, copy it into that Feature Studio, create a new version.
+
+Next: Phase 8, when Josh has a real part.

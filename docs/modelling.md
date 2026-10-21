@@ -28,9 +28,11 @@ There must be at least one `FIX` and one `LOAD` region. Loads, supports and mate
 
 ## The Preserve region feature
 
-Add it from the feature toolbar. In Josh's working document it is the Feature Studio `PreserveRegion`; in
-another document, add it once through **Custom features → Add custom features** from a released version of
-that document. Parameters:
+Add it from the feature toolbar. It lives in the Feature Studio `Preserve region` of the Onshape document
+[Topology Optimization Region Preservation](https://skildai.onshape.com/documents/ece039374f3dbe89ff3dcd03/w/782a834a23bf75ae91b2686c/e/f6ae7b3fd3fb7b66f0d32fb1);
+add it to your document once through **Custom features → Add custom features**, picking that document's latest
+version (V1 or later). Its source is [featurescript/PreserveRegion.fs](../featurescript/PreserveRegion.fs): change
+it there, copy it into that Feature Studio, and create a new version. Parameters:
 
 - **Faces to preserve:** the faces that must stay exact, all on `SPACE`.
 - **Role:** FIX, LOAD or PASSIVE.
