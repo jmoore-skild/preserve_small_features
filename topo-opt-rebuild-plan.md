@@ -356,16 +356,16 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 
 **Mechanical (`run_mechanical.py`).**
 
-- [ ] Face matching: sample points on every CAD face of `SPACE` (the face's mesh nodes after meshing *(verify the MeshData API)*). Assign a face to a region when none of its points is outside K by more than ε and most are strictly inside. A face that matches two regions is an error.
-- [ ] Per region, the matched face count and area must equal the attribute's (area within 0.1 %).
-- [ ] Build one named selection per region (`NS_<ROLE>_<label>`) from the matched face IDs. This replaces the radius worksheet.
-- [ ] BCs from the part YAML: fixed supports on FIX regions, and one remote force (vector, behaviour) per load entry on its LOAD regions. One static load case; several load cases are out of scope for now.
-- [ ] M3 exclusion on all S faces, with Exclusion Thickness = each region's t. If regions differ in t: can Mechanical take several exclusion regions, each with its own thickness? *(verify)* If not, fail with a message asking for one t per part.
-- [ ] Keep M0 (All Boundary Conditions, 2h) for comparison runs.
+- [x] Face matching: sample points on every CAD face of `SPACE` (the face's mesh nodes after meshing; verified: `MeshDataByName("Global").MeshRegionById(face).Nodes`, in mm). Assign a face to a region when none of its points is outside K by more than ε and most are strictly inside. A face that matches two regions is an error. *(`regions.match_faces`, tested without Ansys.)*
+- [x] Per region, the matched face count and area must equal the attribute's. *The area tolerance is 1 %, not 0.1 %: Mechanical's `Face.Area` is the area of its coarse display tessellation (a 32-facet bore reads 0.16 % low). The count is the strict check.*
+- [x] Build one named selection per region (`NS_<ROLE>_<label>`) from the matched face IDs. This replaces the radius worksheet.
+- [x] BCs from the part YAML: fixed supports on FIX regions, and one remote force (vector, behaviour) per load entry on its LOAD regions. One static load case; several load cases are out of scope for now.
+- [x] M3 exclusion on all S faces, with Exclusion Thickness = the regions' t. *Verified: Mechanical has one thickness per optimization region; `AddExclusionRegion` is deprecated and makes a `LocalDesignRestriction` with no thickness. So a part whose regions differ in t fails with a message asking for one t. A run can still set `exclusion.thickness_override` (X2).*
+- [x] Keep M0 (All Boundary Conditions, 2h) for comparison runs.
 
 **Rebuild (`rebuild.py`).** Input checks and the boolean are already generic.
 
-- [ ] Replace the bore probes with overlap volumes: each region's K ∩ `SPACE` belongs to the component of `final` that holds most of its volume. The main body holds every FIX and LOAD region. Failure rules are unchanged.
+- [x] Replace the bore probes with overlap volumes: each region's K ∩ `SPACE` belongs to the component of `final` that holds most of its volume. The main body holds every FIX and LOAD region. Failure rules are unchanged. *Zero-volume sliver components that the booleans sometimes leave (< 1e-3 mm³) are dropped and counted.*
 
 **Metrics (`measure.py`).** Volume bookkeeping, stiffness and cost stay as in Section 9.
 
@@ -375,32 +375,41 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 | Connectivity, PASSIVE attachment | From the rebuild report | As in Section 9 |
 | Seam necks | Distance bands outside each K inside `SPACE`, in 0.5 mm steps up to the smaller of 2h and half the gap to the nearest other keep. Per band: the fraction of `SPACE`'s band volume that `final` keeps (grid sampling). | Flag dips > 25 % |
 
-- [ ] Implement these metrics. On the beam, the bands are the existing cylindrical shells, so the seam results should match the old metric.
-- [ ] Keep the bore-fit and seat metrics running on the beam until Gate 4 so the two can be compared.
+- [x] Implement these metrics. On the beam, the bands are the existing cylindrical shells, so the seam results should match the old metric. *They flag the same keeps. The new profile is a volume fraction rather than an absolute cross-section, so the dip values differ.*
+- [x] Keep the bore-fit and seat metrics running on the beam until Gate 4 so the two can be compared (`legacy_beam_metrics` in the part YAML).
+
+*Refinements made while implementing:*
+- *P also requires K's material behind the surface: the point 2ε into the material must be inside K. Without that, a face that only touches K's void margin counted as preserved. On the bracket this was a 0.5 mm band of the unselected counterbore wall above the marked step.*
+- *Bands are computed per keep part (each `KEEP_*` body) rather than per region, so the marked beam's four FIX bores get four profiles, as before. The seam grid pitch is 0.5 mm (about 2 000 points per beam band).*
+- *P samples use a fixed low-discrepancy pattern per triangle, so they move with the part under rotation.*
 
 **Validation (`validate.py`).**
 
-- [ ] BC nodes: FE nodes within the tolerance (rename `fix_radial_tol` to `bc_surface_tol`) of the S triangles of the FIX and LOAD regions.
-- [ ] Read the pilot location and force vector from the run's `mechanical.json`, not `validate.pilot`.
-- [ ] Converge on pilot displacement along the load direction.
-- [ ] Measure the stress exclusion bands as distance to K. Stresses stay indicative only.
-- [ ] Rename `bore_size` to `feature_size`; Prime's curvature sizing is already generic.
+- [x] BC nodes: FE nodes within the tolerance (rename `fix_radial_tol` to `bc_surface_tol`) of the S triangles of the FIX and LOAD regions.
+- [x] Read the pilot location and force vector from the run's `mechanical.json`, not `validate.pilot`.
+- [x] Converge on pilot displacement along the load direction. *Implemented as the compliance ΣF·u, which is the same thing for one load and also covers several.*
+- [x] Measure the stress exclusion bands as distance to K. Stresses stay indicative only.
+- [x] Rename `bore_size` to `feature_size`; Prime's curvature sizing is already generic.
+
+*Robustness fixes made while running:*
+- *The CDB is parsed by `validate.read_cdb`, not `ansys.mapdl.reader`. That import loads VTK rendering DLLs, which Smart App Control blocked intermittently on 2026-10-20.*
+- *A failed Prime wrap is retried with the feature size × 0.9, then × 1.1 (`validate.wrap_retry_factors`). The bracket at exactly 1.5/0.4 mm self-intersects; the sizes either side wrap cleanly.*
 
 **Layout and tests.**
 
-- [ ] Use `geometry/<part>/`, `runs/<part>/<run_id>/` and `config/parts/`; `run_matrix` and `collect` take `--part`. Update Section 6 and the README.
-- [ ] Port the Phase 2 synth tests to the generic code, with the same planted defects and acceptance.
-- [ ] Orientation test: apply an arbitrary rotation to a synth case (`space`, `keep`, `opt`); every metric must stay the same within its tolerance.
+- [x] Use `geometry/<part>/`, `runs/<part>/<run_id>/` and `config/parts/`; `run_matrix` and `collect` take `--part`. Update Section 6 and the README. *Phase 4 runs are archived in `runs/_phase4/`, the Phase 1 exports in `geometry/_phase1/`.*
+- [x] Port the Phase 2 synth tests to the generic code, with the same planted defects and acceptance.
+- [x] Orientation test: apply an arbitrary rotation to a synth case (`space`, `keep`, `opt`); every metric must stay the same within its tolerance.
 
 **Regression and first general runs.** Record them in `results/general_geometry.md`.
 
-- [ ] Original beam through the generic pipeline, M3_h4 and M3_h2. Requirements:
+- [x] Original beam through the generic pipeline, M3_h4 and M3_h2. Requirements:
   - face matching selects exactly the 8 bores;
   - element count, iterations and final volume match Phase 4;
   - specific stiffness is within 0.5 %;
   - fidelity passes.
-- [ ] Re-marked beam, M3_h2: same tolerances, against the original-beam run.
-- [ ] Bracket, end to end: M3 at h = 2 and 4 + rebuild + measure + validate, plus M0 at h = 2 to compare raw against rebuilt on off-axis holes.
+- [x] Re-marked beam, M3_h2: same tolerances, against the original-beam run.
+- [x] Bracket, end to end: M3 at h = 2 and 4 + rebuild + measure + validate, plus M0 at h = 2 to compare raw against rebuilt on off-axis holes.
 
 **Gate 4:** Josh reviews the regression and the bracket results, decides whether to retire the beam-only metrics, and picks the settings for his own part.
 
@@ -653,3 +662,35 @@ Phase 6 starting points:
 - `pipeline/regions.py` has the Region model and `surface_in_keep`, ready for face matching and the generic metrics.
 - Phase 4 run artifacts are still under `runs/<run_id>/`. Move them to `runs/beam/` when the layout changes.
 - Python: use `.venv/Scripts/python.exe` (stdlib launcher) and `python -m pytest`.
+
+**2026-10-21 — Phase 6 done; at Gate 4.** Code commit `5424cde`; results in `results/general_geometry.md`.
+
+- **Regression:** the generic pipeline reproduces Phase 4 on the beam exactly:
+  - the same 8 bores matched, with the same elements, iterations and volumes;
+  - specific stiffness equal to within 5e-7.
+  The re-marked beam gives identical results.
+- **Bracket:** every rebuilt run (M3_h4, M3_h2, M0R_h2) reproduces every preserved surface exactly (≤ 3e-8 mm).
+  - Raw M0_h2 misses by 0.26–0.30 mm on the FIX and LOAD holes and by 2.6–9.8 mm on the unprotected slot and
+    counterbore.
+  - Specific stiffness: M3_h4 is −3.0 % against M3_h2, and M0R_h2 +0.6 %.
+  - Seam necks are flagged at the LOAD keeps for M3_h4 and at the slot for M0R_h2.
+  - The full-design BC check agrees with Mechanical to 0.03 %.
+- **Verified facts:**
+  - Mesh nodes per CAD face: `MeshDataByName("Global").MeshRegionById(face_id).Nodes`, in mm.
+  - Mechanical's `Face.Area` is the area of its coarse display tessellation (−0.16 % on a bore).
+  - One Exclusion Thickness per optimization region. `AddExclusionRegion` is deprecated; it makes a
+    `LocalDesignRestriction` with no thickness.
+  - trimesh imports `hashlib`, so `run_mechanical` imports `regions` only after `preload_ansys_openssl`.
+- **Environment:**
+  - libigl (installed with `uv pip install --python .venv/Scripts/python.exe`) replaces trimesh's ray and
+    proximity queries, which needed minutes or ran out of memory without Embree.
+  - Smart App Control blocked `vtkRenderingContextOpenGL2` (loaded by `ansys.mapdl.reader`) intermittently on
+    2026-10-20, so `validate` parses CDBs itself.
+- **Not done:** `pipeline.synth` still builds the procedural beam from `base.yaml`'s beam keys. It is test-only.
+
+Gate 4 questions for Josh (Section 4 of `results/general_geometry.md`):
+1. Retire the beam-only bore and seat metrics? (Recommended.)
+2. Settings for his part: M3 + rebuild at h = 2 (recommended).
+3. The real load and material for his part YAML.
+
+Next session: after Gate 4, Phase 7 (skill and plugin) or Phase 8 (Josh's part), whichever Josh picks.
