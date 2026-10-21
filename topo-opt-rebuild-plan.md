@@ -723,4 +723,8 @@ Teammates' copy of the feature: Josh created the document "Topology Optimization
 version V1 (`f194d48da7d75db313661fde`). The README and `docs/modelling.md` now point at it. When the feature
 changes: edit the repo file, copy it into that Feature Studio, create a new version.
 
+2026-10-21: toolbar icon. `featurescript/icons/preserve_region.svg` (a truss between a FIX and a LOAD boss)
+was uploaded over REST as the tab "Preserve region icon.svg" (`d20121c2696a161418982641`) and imported by the
+feature as `PRESERVE_ICON` (commits `82452cf`, `ddc8c87`). Josh checked it and created version V2.
+
 Next: Phase 8, when Josh has a real part.

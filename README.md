@@ -23,7 +23,7 @@ What you need (Windows):
    `ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY`. Every export uses the company's API allocation.
 4. **The Preserve region feature** in your Onshape document: Custom features → Add custom features → the
    document [Topology Optimization Region Preservation](https://skildai.onshape.com/documents/ece039374f3dbe89ff3dcd03/w/782a834a23bf75ae91b2686c/e/f6ae7b3fd3fb7b66f0d32fb1),
-   version V1 (or later). [docs/modelling.md](docs/modelling.md) explains how to model and mark a part.
+   version V2 (or later). [docs/modelling.md](docs/modelling.md) explains how to model and mark a part.
 
 **Claude Code:** the project skill `topo-rebuild` ([.claude/skills/topo-rebuild/](.claude/skills/topo-rebuild/))
 loads when Claude Code runs in this repo. Ask it to "run <part>" and it runs the chain below, stopping for review
