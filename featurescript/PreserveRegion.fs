@@ -1,6 +1,9 @@
 FeatureScript 3095;
 import(path : "onshape/std/common.fs", version : "3095.0");
 
+// Toolbar icon: featurescript/icons/preserve_region.svg, uploaded to this document as "Preserve region icon.svg".
+PRESERVE_ICON::import(path : "d20121c2696a161418982641", version : "d8e2d3d2ad05bf6f734d2b4f");
+
 // Preserve region (plan Phase 5).
 //
 // Marks faces of the design part (SPACE) whose geometry must survive topology optimization exactly.
@@ -42,6 +45,7 @@ const ROLE_TITLES = { PreserveRole.FIX : "Fix", PreserveRole.LOAD : "Load", Pres
 // The tree shows e.g. "Preserve Fix 1": role and the resolved label, which make the feature's name unique.
 annotation { "Feature Type Name" : "Preserve region",
              "Feature Name Template" : "Preserve #roleTitle #labelText",
+             "Icon" : PRESERVE_ICON::BLOB_DATA,
              "Feature Type Description" : "Faces that topology optimization must keep exact. Creates KEEP_<ROLE>_<label> solids straddling the faces (wall t into the material, margin m into the void)." }
 export const preserveRegion = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
