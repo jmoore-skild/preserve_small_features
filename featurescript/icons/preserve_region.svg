@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Preserve region: a topology-optimized truss between two bosses whose bores are kept exact.
+       Blue keep = FIX, red keep = LOAD (the feature's role colours). -->
+  <defs>
+    <mask id="bores" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+      <rect width="24" height="24" fill="#fff"/>
+      <circle cx="5.5" cy="18.5" r="1.9" fill="#000"/>
+      <circle cx="18.5" cy="5.5" r="1.9" fill="#000"/>
+    </mask>
+  </defs>
+  <g mask="url(#bores)">
+    <g fill="none" stroke="#7a7a7a" stroke-width="2.6" stroke-linecap="round">
+      <path d="M5.5 18.5 Q4.5 4.5 18.5 5.5"/>
+      <path d="M5.5 18.5 Q19.5 19.5 18.5 5.5"/>
+      <path d="M5.5 18.5 L18.5 5.5"/>
+    </g>
+    <circle cx="5.5" cy="18.5" r="4.9" fill="#2673d9"/>
+    <circle cx="18.5" cy="5.5" r="4.9" fill="#d9403a"/>
+  </g>
+</svg>
