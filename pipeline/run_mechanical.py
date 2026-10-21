@@ -1,10 +1,16 @@
 """PyMechanical TO run (plan Phase 3): import STEP -> mesh -> static -> level-set TO -> solve -> export.
 
-    python -m pipeline.run_mechanical --run M3_h4            # reads config/runs/M3_h4.yaml
-    python -m pipeline.run_mechanical --run M3_h4 --no-solve # build and save the model only
+    python -m pipeline.run_mechanical --part bracket --run M3_h4            # config/parts + config/runs
+    python -m pipeline.run_mechanical --part bracket --run M3_h4 --no-solve # build and save the model only
 
-Writes runs/<id>/: config.yaml (resolved), material.xml, model.mechdat, opt.stl, mechanical.json.
-API names verified against Ansys 2026 R1 (v261) embedded on 2026-10-15.
+Reads geometry/<part>/space.step and the part's regions (geometry_check must have passed). After meshing, each
+CAD face of SPACE is matched to a preserve region from its mesh nodes (regions.match_faces), giving one named
+selection NS_<ROLE>_<label> per region. Supports and remote forces come from the part YAML; M3 excludes every
+region's faces with Exclusion Thickness = the regions' wall thickness t.
+
+Writes runs/<part>/<id>/: config.yaml (resolved), material.xml, model.mechdat, opt.stl, mechanical.json.
+API names verified against Ansys 2026 R1 (v261) embedded on 2026-10-15; GeoData faces, MeshData nodes and the
+exclusion API on 2026-10-20.
 """
 from __future__ import annotations
 
@@ -18,12 +24,15 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+import numpy as np
 import yaml
 
-from pipeline.config import REPO, bore_radius, bores, keep_radius, load_config
+from pipeline.config import geometry_dir, load_run_config, run_dir
 
-RUNS_CONFIG = REPO / "config" / "runs"
+if TYPE_CHECKING:     # imported in run(): trimesh loads Python's libcrypto (see preload_ansys_openssl)
+    from pipeline import regions as rg
 
 
 # --------------------------------------------------------------------------- Ansys environment
@@ -93,11 +102,19 @@ def write_material_xml(cfg: dict, version: int, out: Path) -> str:
 
 # --------------------------------------------------------------------------- model setup
 
-def zone_x_range(cfg: dict, zone: str) -> tuple[float, float]:
-    """X range enclosing a zone's bores (bore x ± keep radius), for the worksheet location filter."""
-    xs = [b.x for b in bores(cfg) if b.zone == zone]
-    R = keep_radius(cfg)
-    return min(xs) - R, max(xs) + R
+def exclusion_thickness(cfg: dict, regions: list[rg.Region]) -> float:
+    """M3's Exclusion Thickness: the run's thickness_override, else the regions' common wall thickness t.
+
+    Mechanical has one Exclusion Thickness per optimization region. Its extra exclusion regions (AddExclusionRegion,
+    now LocalDesignRestriction) have no thickness (checked on v261, 2026-10-20), so regions must share one t."""
+    over = cfg["topology_optimization"]["exclusion"].get("thickness_override")
+    if over is not None:
+        return float(over)
+    ts = sorted({r.wall_thickness for r in regions})
+    if len(ts) != 1:
+        raise ValueError(f"preserve regions have different wall thicknesses {ts} mm; Mechanical takes one Exclusion "
+                         "Thickness per optimization, so give every Preserve region of the part the same t")
+    return ts[0]
 
 
 class Model:
@@ -165,50 +182,70 @@ class Model:
         mesh.GenerateMesh()
         return {"nodes": mesh.Nodes, "elements": mesh.Elements}
 
-    def bore_selection(self, name: str, zone: str | None = None):
-        """Worksheet NS: faces with the bore radius, optionally filtered to one zone's X range."""
-        A, C, O = self.SelectionActionType, self.SelectionCriterionType, self.SelectionOperatorType
+    def face_nodes(self) -> tuple[dict[int, np.ndarray], dict[int, float]]:
+        """Mesh node coordinates (mm) and area (mm²) of every CAD face of the body. Needs the mesh."""
+        md = self.ExtAPI.DataModel.MeshDataByName("Global")
+        if str(md.Unit) != "mm":
+            raise RuntimeError(f"mesh data unit is {md.Unit}, expected mm")
+        pts, area = {}, {}
+        for f in self.body.GetGeoBody().Faces:
+            pts[f.Id] = np.array([[n.X, n.Y, n.Z] for n in md.MeshRegionById(f.Id).Nodes], dtype=float)
+            area[f.Id] = float(f.Area)
+        return pts, area
+
+    def face_selection(self, name: str, face_ids: list[int]):
         ns = self.m.AddNamedSelection()
         ns.Name = name
-        ns.ScopingMethod = self.GeometryDefineByType.Worksheet
-
-        def row(action, crit, op, value=None, bounds=None):
-            c = self.Ansys.ACT.Automation.Mechanical.NamedSelectionCriterion()
-            c.Active, c.Action, c.EntityType = True, action, self.SelectionType.GeoFace
-            c.Criterion, c.Operator = crit, op
-            if value is not None:
-                c.Value = self.q(value)
-            if bounds is not None:
-                c.LowerBound, c.UpperBound = self.q(bounds[0]), self.q(bounds[1])
-            ns.GenerationCriteria.Add(c)
-
-        row(A.Add, C.Radius, O.Equal, value=bore_radius(self.cfg))
-        if zone is not None:
-            row(A.Filter, C.LocationX, O.RangeInclude, bounds=zone_x_range(self.cfg, zone))
-        ns.Generate()
+        sel = self.ExtAPI.SelectionManager.CreateSelectionInfo(self.SelectionTypeEnum.GeometryEntities)
+        sel.Ids = list(face_ids)
+        ns.Location = sel
         return ns
 
-    def static(self, fix_ns, load_ns):
-        lc = self.cfg["loads"]["remote_force"]
+    def static(self, supports: list[dict], loads: list[dict]) -> list[dict]:
+        """supports / loads: the part YAML entries, each with "ns" (its named selection) added. One remote force
+        per load entry, components = magnitude × unit direction. Returns each load's regions, force and pilot."""
         st = self.m.AddStaticStructuralAnalysis()
-        fs = st.AddFixedSupport()
-        fs.Location = fix_ns
-        rf = st.AddRemoteForce()
-        rf.Location = load_ns
-        rf.DefineBy = self.LoadDefineBy.Components
-        comps = [self.q(lc["magnitude"] * d, "N") for d in lc["direction"]]
-        rf.XComponent.Output.DiscreteValues = [comps[0]]
-        rf.YComponent.Output.DiscreteValues = [comps[1]]
-        rf.ZComponent.Output.DiscreteValues = [comps[2]]
-        rf.Behavior = getattr(self.LoadBehavior, lc["behavior"].capitalize())
-        # Full-design tip deflection, to pin down the optimizer's compliance convention (F*u vs F*u/2).
-        uz = st.Solution.AddDirectionalDeformation()
-        uz.Location = load_ns
-        uz.NormalOrientation = self.NormalOrientationType.ZAxis
-        self.static_analysis, self.remote_force, self.static_uz = st, rf, uz
-        return {"pilot": [rf.XCoordinate.Value, rf.YCoordinate.Value, rf.ZCoordinate.Value]}
+        for e in supports:
+            if e.get("type", "fixed") != "fixed":
+                raise ValueError(f"support type {e['type']!r} not implemented (fixed only)")
+            fs = st.AddFixedSupport()
+            fs.Location = e["ns"]
+        out, self.load_deformations = [], []
+        for e in loads:
+            if e.get("type", "remote_force") != "remote_force":
+                raise ValueError(f"load type {e['type']!r} not implemented (remote_force only)")
+            d = np.asarray(e["direction"], dtype=float)
+            force = e["magnitude"] * d / np.linalg.norm(d)
+            rf = st.AddRemoteForce()
+            rf.Location = e["ns"]
+            rf.DefineBy = self.LoadDefineBy.Components
+            rf.XComponent.Output.DiscreteValues = [self.q(force[0], "N")]
+            rf.YComponent.Output.DiscreteValues = [self.q(force[1], "N")]
+            rf.ZComponent.Output.DiscreteValues = [self.q(force[2], "N")]
+            rf.Behavior = getattr(self.LoadBehavior, e["behavior"].capitalize())
+            # Full-design deflection of the loaded faces, to compare with the validation chain.
+            comps = []
+            for axis in ("XAxis", "YAxis", "ZAxis"):
+                u = st.Solution.AddDirectionalDeformation()
+                u.Location = e["ns"]
+                u.NormalOrientation = getattr(self.NormalOrientationType, axis)
+                comps.append(u)
+            self.load_deformations.append(comps)
+            out.append({"regions": e["regions"], "force": force.tolist(), "behavior": e["behavior"],
+                        "pilot": [rf.XCoordinate.Value, rf.YCoordinate.Value, rf.ZCoordinate.Value]})
+        self.static_analysis = st
+        return out
 
-    def topology(self, method: str, bores_ns):
+    def static_result(self, loads: list[dict]) -> list[dict]:
+        """Average deflection of each load's faces, and its component along the load."""
+        out = []
+        for e, comps in zip(loads, self.load_deformations):
+            u = np.array([c.Average.Value for c in comps])
+            d = np.asarray(e["force"]) / np.linalg.norm(e["force"])
+            out.append({"regions": e["regions"], "u_avg": u.tolist(), "u_along_load_avg": float(u @ d)})
+        return out
+
+    def topology(self, method: str, exclusion_ns=None, thickness: float | None = None):
         to = self.cfg["topology_optimization"]
         topo = self.m.AddTopologyOptimizationAnalysis()
         topo.TransferDataFrom(self.static_analysis)
@@ -217,8 +254,8 @@ class Model:
         reg.OptimizationType = self.OptimizationType.TopologyLevelSet
         if method == "M3":
             reg.ExclusionScopingMethod = self.GeometryDefineByType.Component
-            reg.ExclusionRegionLocation = bores_ns
-            reg.ExclusionThickness = self.q(to["exclusion"]["thickness_manual"])
+            reg.ExclusionRegionLocation = exclusion_ns
+            reg.ExclusionThickness = self.q(thickness)
             reg.ExclusionExtension = getattr(self.ExclusionType, to["exclusion"]["extension"].capitalize())
         elif method == "M0":
             reg.ExclusionScopingMethod = self.GeometryDefineByType.BoundaryCondition
@@ -286,15 +323,21 @@ def props(obj) -> dict:
 
 # --------------------------------------------------------------------------- run
 
-def run(run_id: str, solve: bool = True) -> dict:
-    cfg = load_config(RUNS_CONFIG / f"{run_id}.yaml")
+class FaceMatchError(RuntimeError):
+    """CAD faces don't match the preserve regions (count or area differs from the Preserve region attribute)."""
+
+
+def run(part: str, run_id: str, solve: bool = True) -> dict:
+    from pipeline import regions as rg       # after preload_ansys_openssl: trimesh imports hashlib
+    cfg = load_run_config(part, run_id)
     rc = cfg["run"]
     version = cfg["mechanical"]["version"]
-    out = REPO / "runs" / run_id
+    geo = rg.load_part_geometry(geometry_dir(part))
+    out = run_dir(part, run_id)
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
-    meta = {"run_id": run_id, "method": rc["method"], "h": rc["h"],
+    meta = {"part": part, "run_id": run_id, "method": rc["method"], "h": rc["h"],
             "started": datetime.now(timezone.utc).isoformat(), "wall_time": {}}
 
     def timed(key, fn, *a, **kw):
@@ -303,29 +346,60 @@ def run(run_id: str, solve: bool = True) -> dict:
         meta["wall_time"][key] = time.perf_counter() - t
         return r
 
+    def save_meta():
+        (out / "mechanical.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+
     from ansys.mechanical.core import App
     app = timed("start", App, version=version)
     meta["ansys_version"] = str(app.version)
     meta["ansys_product"] = str(app).splitlines()[0]
     model = Model(app, cfg)
 
-    meta["geometry"] = timed("import", model.import_geometry, REPO / "geometry" / "space.step")
+    meta["geometry"] = timed("import", model.import_geometry, geometry_dir(part) / "space.step")
     mat = write_material_xml(cfg, version, out / "material.xml")
     model.assign_material(out / "material.xml", mat)
-    ns_all = model.bore_selection("BORES")
-    ns_fix = model.bore_selection("BORES_FIX", "FIX")
-    ns_load = model.bore_selection("BORES_LOAD", "LOAD")
-    meta["named_selections"] = {ns.Name: len(ns.Location.Ids) for ns in (ns_all, ns_fix, ns_load)}
     meta["mesh"] = timed("mesh", model.mesh, rc["h"])
-    meta["static"] = model.static(ns_fix, ns_load)
-    meta["topology_setup"] = model.topology(rc["method"], ns_all)
+
+    # Preserve regions -> CAD faces -> one named selection per region.
+    pts, area = model.face_nodes()
+    matches = timed("face_matching", rg.match_faces, pts, geo, cfg["regions"]["surface_tol"])
+    checks = rg.check_matches(matches, area, geo, cfg["regions"]["match_area_tol"])
+    meta["regions"] = checks
+    meta["unmatched_faces"] = len(pts) - sum(len(v) for v in matches.values())
+    if not all(c["ok"] for c in checks):
+        save_meta()
+        bad = [{k: c[k] for k in ("region", "face_count", "area_mm2", "attribute_face_count", "attribute_area_mm2")}
+               for c in checks if not c["ok"]]
+        raise FaceMatchError(f"CAD faces don't match the preserve regions: {bad}")
+    ns = {r.name: model.face_selection(f"NS_{r.name}", matches[r.name]) for r in geo.regions}
+
+    def bc_entries(kind: str, role: str) -> list[dict]:
+        """The part YAML's supports or loads, each with its regions resolved and a named selection."""
+        names, problems = rg.resolve_bc_regions(cfg[kind], role, geo.regions)
+        if problems:
+            raise ValueError(f"part YAML {kind}: {problems}")
+        out_ = []
+        for i, (e, sel) in enumerate(zip(cfg[kind], names), start=1):
+            loc = ns[sel[0]] if len(sel) == 1 else model.face_selection(
+                f"NS_{kind.upper()}_{i}", [f for n in sel for f in matches[n]])
+            out_.append({**e, "regions": sel, "ns": loc})
+        return out_
+
+    supports = bc_entries("supports", "FIX")
+    meta["supports"] = [{k: v for k, v in e.items() if k != "ns"} for e in supports]
+    meta["loads"] = model.static(supports, bc_entries("loads", "LOAD"))
+    if rc["method"] == "M3":
+        t = exclusion_thickness(cfg, geo.regions)
+        excl = model.face_selection("NS_EXCLUSION", [f for r in geo.regions for f in matches[r.name]])
+        meta["exclusion"] = {"thickness": t, "faces": len(excl.Location.Ids)}
+        meta["topology_setup"] = model.topology("M3", excl, t)
+    else:
+        meta["topology_setup"] = model.topology(rc["method"])
 
     if solve:
         nprocs = cfg["mechanical"]["nproc"]
         meta["cores"] = {"static": timed("solve_static", model.solve, model.static_analysis.Solution, nprocs)}
-        uz = model.static_uz
-        meta["static_result"] = {"uz_load_bores_avg": uz.Average.Value, "uz_load_bores_min": uz.Minimum.Value,
-                                 "uz_load_bores_max": uz.Maximum.Value}
+        meta["static_result"] = model.static_result(meta["loads"])
         meta["cores"]["topology"] = timed("solve_topology", model.solve, model.topo.Solution, nprocs)
         meta["solution"] = props(model.topo.Solution)
         solver_dir = Path(model.topo.WorkingDir)
@@ -337,18 +411,20 @@ def run(run_id: str, solve: bool = True) -> dict:
 
     app.save(str(out / "model.mechdat"))
     meta["finished"] = datetime.now(timezone.utc).isoformat()
-    (out / "mechanical.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+    save_meta()
     return meta
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--part", required=True, help="part name; reads config/parts/<part>.yaml and geometry/<part>/")
     ap.add_argument("--run", required=True, help="run id; reads config/runs/<id>.yaml")
     ap.add_argument("--no-solve", action="store_true", help="build and save the model without solving")
     a = ap.parse_args(argv)
-    preload_ansys_openssl(load_config(RUNS_CONFIG / f"{a.run}.yaml")["mechanical"]["version"])
-    meta = run(a.run, solve=not a.no_solve)
-    print(json.dumps({k: meta[k] for k in ("mesh", "named_selections", "wall_time")}, indent=2, default=str))
+    preload_ansys_openssl(load_run_config(a.part, a.run)["mechanical"]["version"])
+    meta = run(a.part, a.run, solve=not a.no_solve)
+    print(json.dumps({k: meta.get(k) for k in ("mesh", "regions", "unmatched_faces", "loads", "exclusion",
+                                               "wall_time")}, indent=2, default=str))
     return 0
 
 

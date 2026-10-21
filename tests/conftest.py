@@ -2,7 +2,7 @@ import functools
 
 import pytest
 
-from pipeline import geom, synth
+from pipeline import regions as rg, synth
 from pipeline.config import load_config
 
 H = 4.0   # synthetic opt meshes mimic a 4 mm TO mesh
@@ -14,13 +14,19 @@ def cfg():
 
 
 @pytest.fixture(scope="session")
-def space(cfg):
-    return geom.to_trimesh(geom.make_space(cfg))
+def geo(cfg):
+    """The procedural beam with hand-modelled keeps: regions FIX_1..4, LOAD_1..2, PASSIVE_1..2."""
+    return rg.standin_geometry(cfg)
 
 
 @pytest.fixture(scope="session")
-def keep(cfg):
-    return geom.to_trimesh(geom.union_all(geom.make_keep_parts(cfg).values()))
+def space(geo):
+    return geo.space
+
+
+@pytest.fixture(scope="session")
+def keep(geo):
+    return geo.keep
 
 
 @pytest.fixture(scope="session")

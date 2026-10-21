@@ -2,12 +2,10 @@
 on a failure.
 
     python -m pipeline.geometry_check --part <part>       # generic checks (plan Phase 5) on geometry/<part>
-    python -m pipeline.geometry_check [--geometry-dir geometry]
-                                                          # beam analytic checks (Phase 1) on geometry/
-    python -m pipeline.geometry_check --write-standin     # procedural SPACE/KEEP_* for dry runs, then check
 
-Reads space.stl and keep_parts/KEEP_*.stl (and, with --part, export.json and regions.json); writes keep.stl
-(union of KEEP_* parts) and geometry_check.json.
+Reads space.stl, keep_parts/KEEP_*.stl, export.json and regions.json; writes keep.stl (union of KEEP_* parts) and
+geometry_check.json. A part YAML with legacy_beam_checks also runs the Phase 1 analytic beam checks
+(check_geometry, which the tests also run on the procedural stand-in from write_standin).
 """
 from __future__ import annotations
 
@@ -19,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from pipeline import geom, regions as rg
-from pipeline.config import REPO, bore_radius, bores, geometry_dir, keep_radius, load_config, load_part
+from pipeline.config import bore_radius, bores, geometry_dir, keep_radius, load_part, load_run_config
 
 POS_TOL = 0.01      # mm, bore/keep axis position (plan Phase 1)
 VOL_TOL = 0.001     # relative
@@ -123,23 +121,6 @@ def check_geometry(gdir: Path, cfg: dict) -> tuple[Checks, object]:
     return c, keep
 
 
-def _bc_regions(entries: list[dict], role: str, regions: list[rg.Region]) -> tuple[list[str], list[str]]:
-    """Region names the part YAML's supports/loads refer to: (resolved, problems)."""
-    of_role = [r.name for r in regions if r.role == role]
-    known = {r.name: r.role for r in regions}
-    names, problems = [], []
-    for e in entries:
-        sel = e.get("regions", "all")
-        sel = of_role if sel == "all" else list(sel)
-        for n in sel:
-            if n not in known:
-                problems.append(f"{n} does not exist")
-            elif known[n] != role:
-                problems.append(f"{n} is {known[n]}, not {role}")
-        names += sel
-    return names, problems
-
-
 def check_part(gdir: Path, cfg: dict, part: dict) -> tuple[Checks, object]:
     """Generic checks for a part marked with preserve regions (plan Phase 5)."""
     c = Checks()
@@ -167,8 +148,8 @@ def check_part(gdir: Path, cfg: dict, part: dict) -> tuple[Checks, object]:
           missing=sorted(set(listed) - set(files)), unexpected=sorted(set(files) - set(listed)))
     roles = {r.role for r in regions}
     c.add("at least one FIX and one LOAD region", {"FIX", "LOAD"} <= roles, regions=[r.name for r in regions])
-    fix_names, p1 = _bc_regions(part["supports"], "FIX", regions)
-    load_names, p2 = _bc_regions(part["loads"], "LOAD", regions)
+    fix_names, p1 = rg.resolve_bc_regions(part["supports"], "FIX", regions)
+    load_names, p2 = rg.resolve_bc_regions(part["loads"], "LOAD", regions)
     c.add("part YAML regions exist with the right role", not (p1 + p2) and bool(fix_names) and bool(load_names),
           problems=p1 + p2, supports=fix_names, loads=load_names)
 
@@ -224,20 +205,12 @@ def write_standin(gdir: Path, cfg: dict) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--part", help="config/parts/<part>.yaml; checks geometry/<part> generically")
-    ap.add_argument("--geometry-dir", type=Path, help="default geometry/<part>, or geometry/ without --part")
-    ap.add_argument("--write-standin", action="store_true")
-    ap.add_argument("--config", action="append", default=[])
+    ap.add_argument("--part", required=True, help="config/parts/<part>.yaml; checks geometry/<part>")
+    ap.add_argument("--geometry-dir", type=Path, help="default geometry/<part>")
     a = ap.parse_args(argv)
-    cfg = load_config(*a.config)
-    a.geometry_dir = a.geometry_dir or (geometry_dir(a.part) if a.part else REPO / "geometry")
-    if a.write_standin:
-        write_standin(a.geometry_dir, cfg)
-
-    if a.part:
-        checks, keep = check_part(a.geometry_dir, cfg, load_part(a.part))
-    else:
-        checks, keep = check_geometry(a.geometry_dir, cfg)
+    cfg = load_run_config(a.part)
+    a.geometry_dir = a.geometry_dir or geometry_dir(a.part)
+    checks, keep = check_part(a.geometry_dir, cfg, load_part(a.part))
     if keep is not None and checks.ok:
         keep.export(a.geometry_dir / "keep.stl")
     (a.geometry_dir / "geometry_check.json").write_text(

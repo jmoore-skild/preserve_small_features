@@ -1,6 +1,5 @@
 # Cantilever test beam, hand-modelled keeps (Phases 1-4). Per-part config (plan Phase 5).
-# Shared settings (TO, mesh, export tolerances, material default) stay in config/base.yaml; the beam's analytic
-# geometry keys there (beam, bore, keep, zones) are used by the Phase 1-4 code until Phase 6 makes it generic.
+# Merged on top of config/base.yaml; any base key (material, topology_optimization, ...) can be overridden here.
 onshape:
   element_id: d4e16886d439739ab7f30a1f     # Part Studio 1 (document/workspace from config/onshape.yaml)
 
@@ -18,4 +17,5 @@ loads:
     direction: [0, 0, -1]
     behavior: deformable
 
-legacy_beam_checks: true  # also run the Phase 1 analytic checks (bore fits, coaxial keeps)
+legacy_beam_checks: true   # geometry_check: also run the Phase 1 analytic checks (bore fits, coaxial keeps)
+legacy_beam_metrics: true  # measure: also report the Phase 4 bore-fit and seat metrics (until Gate 4)

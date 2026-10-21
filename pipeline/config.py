@@ -11,6 +11,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 BASE_CONFIG = REPO / "config" / "base.yaml"
 PARTS_DIR = REPO / "config" / "parts"
+RUNS_CONFIG = REPO / "config" / "runs"
 
 
 @dataclass(frozen=True)
@@ -87,5 +88,28 @@ def load_part(name: str) -> dict:
     return part
 
 
+def load_run_config(part: str, run_id: str | None = None) -> dict:
+    """base.yaml, then config/parts/<part>.yaml, then config/runs/<run_id>.yaml. `part` holds the part name, and
+    `supports` / `loads` the part's BC lists."""
+    p = load_part(part)
+    cfg = load_config({k: v for k, v in p.items() if k != "name"},
+                      *([RUNS_CONFIG / f"{run_id}.yaml"] if run_id else []))
+    cfg["part"] = part
+    return cfg
+
+
+def read_run_config(run_dir: Path) -> dict:
+    """The resolved config a run saved (runs/<part>/<id>/config.yaml), over the current base.yaml so that settings
+    added since the run take their defaults; the run's own values win."""
+    path = Path(run_dir) / "config.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found: run_mechanical writes it (run_matrix copies it for M0R runs)")
+    return load_config(path)
+
+
 def geometry_dir(part: str) -> Path:
     return REPO / "geometry" / part
+
+
+def run_dir(part: str, run_id: str) -> Path:
+    return REPO / "runs" / part / run_id

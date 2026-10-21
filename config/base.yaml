@@ -1,5 +1,9 @@
-# All study parameters (plan Section 4). Units: mm, N, MPa, tonne/mm^3 where noted.
-# Scripts must read every dimension, position, and mesh size from here.
+# Shared parameters (plan Section 4). Units: mm, N, MPa, tonne/mm^3 where noted.
+# Per-part settings (Onshape IDs, supports and loads by region, overrides) are in config/parts/<part>.yaml, merged
+# on top of this file; per-run settings (method, h) in config/runs/<run>.yaml, merged last.
+#
+# beam, bore, keep, washer, zones: the cantilever's analytic geometry. Used by the procedural stand-in (synth,
+# tests), the Phase 1 analytic geometry checks and the beam-only bore/seat metrics (legacy_beam_metrics).
 
 beam:
   length: 200.0        # X, root face at x = 0
@@ -32,20 +36,13 @@ material:            # placeholder, PETG-like
   density: 1270.0             # kg/m^3
   template: Polyethylene      # Ansys General_Materials.xml entry cloned for the MatML; E/nu/rho overwritten
 
-loads:
-  remote_force:
-    magnitude: 200.0          # N
-    direction: [0, 0, -1]
-    behavior: deformable
-
 topology_optimization:
   method: level_set
   objective: minimize_compliance
   retain_volume_fraction: 0.60
   min_member_size: null
   manufacturing_constraints: []
-  exclusion:
-    thickness_manual: 3.75    # mm, = (keep - bore) / 2
+  exclusion:                  # M3: thickness = the regions' wall thickness t; a run may set thickness_override
     extension: isotropic
   export_smoothing_move_limit: 0.0   # level-set default: no smoothing, export the level-set surface as is
 
@@ -71,6 +68,8 @@ regions:                      # general geometry (Phases 5-8): preserve regions 
   area_tol: 0.01              # relative, S area on the STL vs the Preserve region attribute (tessellation)
   space_volume_tol: 0.001     # relative, SPACE STL vs Onshape mass-properties volume
   overlap_tol: 0.001          # mm^3, FIX keeps vs LOAD keeps intersection
+  match_area_tol: 0.01        # relative, matched CAD faces vs the attribute; Mechanical's face Area is its coarse
+                              # display tessellation (a 32-facet bore reads 0.16 % low)
 
 rebuild:
   opt_space_volume_ratio: [0.3, 1.0]
@@ -89,23 +88,26 @@ measure:
   seam_shell_step: 0.5        # mm
   seam_dip_flag: 0.25         # fractional dip
   specific_stiffness_tol: 0.10
+  surface_spacing: 0.1        # mm, preserved-surface sample spacing
+  surface_tol: 0.02           # mm, max distance from a preserved-surface sample to the measured mesh
+  seam_grid_step: 0.5         # mm, grid pitch for the seam band volume fractions (~2000 points per beam band)
 
 validate:
   global_size: 1.5
-  bore_size: 0.4
+  feature_size: 0.4           # Prime curvature sizing floor (small features)
   feature_angle: 30.0         # deg, feature edges the Prime wrapper recovers
   growth_rate: 1.2            # Prime surface and volume size growth
   wrap_elements_per_gap: 2    # Prime wrapper proximity sizing: thin members keep at least this many across
+  wrap_retry_factors: [0.9, 1.1]  # a failed wrap is retried with feature_size scaled by these
   nproc: [24, 12, 4]          # MAPDL DMP processes, tried in order until the licenses are granted: all 24 cores
                               # (base + 2 HPC packs), 12 (1 pack), 4 (base only)
   solver: PCG                 # MAPDL EQSLV; sparse direct went out of core at level 1 (2M tets, 21 min)
   solver_tol: 1.0e-8
   convergence_tol: 0.01
-  fix_radial_tol: 0.05
-  pilot: [190.0, 7.5, 30.0]
-  exclude_near_features: 2.0  # mm, member von Mises excludes this band
+  bc_surface_tol: 0.05        # mm, FE nodes this close to a region's S triangles carry its BCs
+  exclude_near_features: 2.0  # mm, member von Mises excludes nodes this close to any keep
   seam_sample_offset: 1.0     # mm
-  seam_shell_halfwidth: 0.25  # mm, nodes within this of the seam offset radius
+  seam_shell_halfwidth: 0.25  # mm, nodes within this of the seam offset from the keep
 
 synth:                        # Phase 2 synthetic opt meshes (not used by real runs)
   voxel_pitch: 4.0            # mimic h = 4

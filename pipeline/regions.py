@@ -6,7 +6,9 @@ A region is one ROLE + label, e.g. FIX_1. It owns one or more keep parts:
   - hand-modelled: KEEP_<ROLE>_<label>, with no attribute; the wall thickness comes from the part YAML.
 
 For a keep solid K and tolerance eps, the exclusion faces S are the parts of SPACE's surface strictly inside K
-(signed distance > eps); the preserved surface P is the part inside or on K (>= -eps).
+(signed distance > eps); the preserved surface P is the part inside or on K (>= -eps) with K's material behind it
+(the point 2 eps into the material is inside K). The second condition keeps flush faces such as the beam's seats
+and drops faces that only touch K's void margin, like a counterbore wall above a marked step.
 """
 from __future__ import annotations
 
@@ -17,6 +19,8 @@ from pathlib import Path
 
 import numpy as np
 import trimesh
+
+from pipeline import geom
 
 ROLES = ("FIX", "LOAD", "PASSIVE")
 KEEP_NAME = re.compile(r"^KEEP_(FIX|LOAD|PASSIVE)_([A-Z0-9_]+)$")
@@ -124,26 +128,164 @@ def load_regions(path: Path) -> list[Region]:
 _BARY = np.array([[1 / 3, 1 / 3, 1 / 3], [2 / 3, 1 / 6, 1 / 6], [1 / 6, 2 / 3, 1 / 6], [1 / 6, 1 / 6, 2 / 3]])
 
 
-def surface_in_keep(space: trimesh.Trimesh, keep: trimesh.Trimesh, eps: float) -> float:
-    """Area of S: SPACE's surface strictly inside keep (signed distance > eps), by per-triangle quadrature."""
+def _near_keep(space: trimesh.Trimesh, keep: trimesh.Trimesh, margin: float) -> np.ndarray:
+    """Indices of SPACE triangles whose bounding box comes within `margin` of the keep's."""
     lo, hi = keep.bounds
     tri = space.triangles
-    cand = np.all(tri.max(axis=1) >= lo - eps, axis=1) & np.all(tri.min(axis=1) <= hi + eps, axis=1)
-    if not cand.any():
-        return 0.0
-    tri = tri[cand]
-    areas = space.area_faces[cand]
-    normals = space.face_normals[cand]
-    pts = np.einsum("qk,nkd->nqd", _BARY, tri).reshape(-1, 3)
-    nrm = np.repeat(normals, len(_BARY), axis=0)
-    # Cheap necessary condition for sd > eps: the point and both of its normal offsets are inside. It rejects the
-    # points lying on K's boundary (SPACE faces flush with a keep face), on which the exact test is slow.
-    ok = keep.contains(pts)
-    for sign in (1.0, -1.0):
-        idx = np.flatnonzero(ok)
-        ok[idx] = keep.contains(pts[idx] + sign * 1.5 * eps * nrm[idx])
-    idx = np.flatnonzero(ok)
-    if len(idx):
-        ok[idx] = trimesh.proximity.signed_distance(keep, pts[idx]) > eps   # positive inside
-    frac = ok.reshape(-1, len(_BARY)).mean(axis=1)
-    return float((areas * frac).sum())
+    return np.flatnonzero(np.all(tri.max(axis=1) >= lo - margin, axis=1)
+                          & np.all(tri.min(axis=1) <= hi + margin, axis=1))
+
+
+def s_face_fraction(space: trimesh.Trimesh, keep: trimesh.Trimesh, eps: float) -> np.ndarray:
+    """Per SPACE triangle, the fraction of its quadrature points strictly inside keep (signed distance > eps)."""
+    frac = np.zeros(len(space.faces))
+    cand = _near_keep(space, keep, eps)
+    if len(cand):
+        pts = np.einsum("qk,nkd->nqd", _BARY, space.triangles[cand]).reshape(-1, 3)
+        frac[cand] = (geom.signed_distance(keep, pts) > eps).reshape(-1, len(_BARY)).mean(axis=1)
+    return frac
+
+
+def surface_in_keep(space: trimesh.Trimesh, keep: trimesh.Trimesh, eps: float) -> float:
+    """Area of S: SPACE's surface strictly inside keep (signed distance > eps), by per-triangle quadrature."""
+    return float((space.area_faces * s_face_fraction(space, keep, eps)).sum())
+
+
+def s_triangles(space: trimesh.Trimesh, keep: trimesh.Trimesh, eps: float) -> trimesh.Trimesh:
+    """The SPACE triangles that make up S (most of their quadrature points strictly inside keep)."""
+    sel = np.flatnonzero(s_face_fraction(space, keep, eps) > 0.5)
+    if not len(sel):
+        raise ValueError("keep holds none of SPACE's surface")
+    return space.submesh([sel], append=True)
+
+
+def preserved_samples(space: trimesh.Trimesh, keep: trimesh.Trimesh, eps: float, spacing: float) -> np.ndarray:
+    """Points on P, about one per spacing²: SPACE's surface inside or on keep (signed distance >= -eps) whose
+    material side is inside keep (the point 2 eps along the inward normal has signed distance > 0)."""
+    cand = _near_keep(space, keep, eps)
+    if not len(cand):
+        return np.empty((0, 3))
+    pts, fi = geom.sample_surface(space, spacing, cand)
+    lo, hi = keep.bounds            # long sliver triangles reach far beyond the keep
+    sel = np.all(pts >= lo - eps, axis=1) & np.all(pts <= hi + eps, axis=1)
+    pts, fi = pts[sel], fi[sel]
+    sel = geom.signed_distance(keep, pts) >= -eps
+    pts, fi = pts[sel], fi[sel]
+    behind = pts - 2 * eps * space.face_normals[fi]
+    return pts[geom.signed_distance(keep, behind) > 0]
+
+
+# --------------------------------------------------------------------------- a part's geometry
+
+@dataclass
+class PartGeometry:
+    """SPACE, the regions and their keep solids, all in the CAD frame (mm)."""
+    space: trimesh.Trimesh
+    regions: list[Region]
+    keep_parts: dict[str, trimesh.Trimesh]      # KEEP_* part name -> solid
+    keep: trimesh.Trimesh                       # union of every keep
+    _region_keeps: dict = field(default_factory=dict, repr=False)
+
+    def region(self, name: str) -> Region:
+        return next(r for r in self.regions if r.name == name)
+
+    def of_role(self, role: str) -> list[Region]:
+        return [r for r in self.regions if r.role == role]
+
+    def region_keep(self, name: str) -> trimesh.Trimesh:
+        """K for a region: the union of its keep parts."""
+        if name not in self._region_keeps:
+            parts = [self.keep_parts[k.part] for k in self.region(name).keeps]
+            self._region_keeps[name] = parts[0] if len(parts) == 1 else geom.to_trimesh(
+                geom.union_all(geom.to_manifold(p) for p in parts))
+        return self._region_keeps[name]
+
+
+def load_part_geometry(gdir: Path) -> PartGeometry:
+    """geometry/<part>/ after a passing geometry_check: space.stl, keep.stl, keep_parts/, regions.json."""
+    gdir = Path(gdir)
+    if not (gdir / "keep.stl").exists():
+        raise FileNotFoundError(f"{gdir / 'keep.stl'} not found: run geometry_check on the part first")
+    regions = load_regions(gdir / "regions.json")
+    parts = {k.part: geom.load_mesh(gdir / "keep_parts" / f"{k.part}.stl") for r in regions for k in r.keeps}
+    return PartGeometry(geom.load_mesh(gdir / "space.stl"), regions, parts, geom.load_mesh(gdir / "keep.stl"))
+
+
+def standin_geometry(cfg: dict, wall_thickness: float = 3.75) -> PartGeometry:
+    """The procedural beam (pipeline.geom) with hand-modelled keeps FIX_1..4, LOAD_1..2, PASSIVE_1..2."""
+    parts = {n: geom.to_trimesh(m) for n, m in geom.make_keep_parts(cfg).items()}
+    regions = build_regions({n: "" for n in parts}, {}, wall_thickness)
+    keep = geom.to_trimesh(geom.union_all(geom.to_manifold(m) for m in parts.values()))
+    return PartGeometry(geom.to_trimesh(geom.make_space(cfg)), regions, parts, keep)
+
+
+def transformed(geo: PartGeometry, matrix: np.ndarray) -> PartGeometry:
+    """A copy with every mesh moved by a 4x4 rigid transform."""
+    def mv(m):
+        return m.copy().apply_transform(matrix)
+    return PartGeometry(mv(geo.space), geo.regions, {n: mv(m) for n, m in geo.keep_parts.items()}, mv(geo.keep))
+
+
+# --------------------------------------------------------------------------- boundary conditions
+
+def resolve_bc_regions(entries: list[dict], role: str, regions: list[Region]) -> tuple[list[list[str]], list[str]]:
+    """Region names each supports/loads entry of the part YAML applies to (`all` = every region of the role), and
+    any problems (unknown region, wrong role, an entry with no regions)."""
+    of_role = [r.name for r in regions if r.role == role]
+    known = {r.name: r.role for r in regions}
+    names, problems = [], []
+    for e in entries:
+        sel = e.get("regions", "all")
+        sel = of_role if sel == "all" else list(sel)
+        if not sel:
+            problems.append(f"a {role} entry selects no regions")
+        for n in sel:
+            if n not in known:
+                problems.append(f"{n} does not exist")
+            elif known[n] != role:
+                problems.append(f"{n} is {known[n]}, not {role}")
+        names.append(sel)
+    return names, problems
+
+
+# --------------------------------------------------------------------------- CAD face matching (Mechanical)
+
+def match_faces(face_points: dict[int, np.ndarray], geo: PartGeometry, eps: float) -> dict[str, list[int]]:
+    """Assign CAD faces of SPACE to regions from points on each face (its mesh nodes).
+
+    A face belongs to a region when none of its points lies outside the region's K by more than eps and most lie
+    strictly inside (signed distance > eps). Raises ValueError for a face that matches two regions.
+    """
+    owner: dict[int, str] = {}
+    out: dict[str, list[int]] = {r.name: [] for r in geo.regions}
+    for r in geo.regions:
+        K = geo.region_keep(r.name)
+        lo, hi = K.bounds
+        for fid, pts in face_points.items():
+            if not len(pts) or np.any(pts.min(axis=0) < lo - eps) or np.any(pts.max(axis=0) > hi + eps):
+                continue
+            sd = geom.signed_distance(K, pts)
+            if sd.min() >= -eps and np.mean(sd > eps) > 0.5:
+                if fid in owner:
+                    raise ValueError(f"CAD face {fid} matches both {owner[fid]} and {r.name}")
+                owner[fid] = r.name
+                out[r.name].append(fid)
+    return out
+
+
+def check_matches(matches: dict[str, list[int]], face_area: dict[int, float], geo: PartGeometry,
+                  area_tol: float) -> list[dict]:
+    """Per region: matched face count and area against the Preserve region attribute. Hand-modelled keeps have
+    no attribute; they only need at least one face. Each record carries ok."""
+    out = []
+    for r in geo.regions:
+        ids = matches[r.name]
+        area = float(sum(face_area[i] for i in ids))
+        rec = {"region": r.name, "faces": ids, "face_count": len(ids), "area_mm2": area,
+               "attribute_face_count": r.face_count, "attribute_area_mm2": r.area_mm2}
+        if r.face_count is None:
+            rec["ok"] = len(ids) > 0
+        else:
+            rec["ok"] = len(ids) == r.face_count and abs(area / r.area_mm2 - 1) <= area_tol
+        out.append(rec)
+    return out

@@ -45,6 +45,56 @@ def load_mesh(path) -> trimesh.Trimesh:
     return mesh
 
 
+# --------------------------------------------------------------------------- point queries (libigl)
+# trimesh's ray-based contains() and rtree proximity queries take minutes on the 1e5-1e6 points the generic
+# metrics need (and contains() runs out of memory); libigl's AABB tree and fast winding number take seconds.
+
+def _vf(mesh: trimesh.Trimesh) -> tuple[np.ndarray, np.ndarray]:
+    return np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces, dtype=np.int64)
+
+
+def inside(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
+    """Points inside a closed mesh (generalized winding number > 1/2). Points on the surface are ambiguous."""
+    import igl
+    if len(points) == 0:
+        return np.zeros(0, dtype=bool)
+    return igl.fast_winding_number(*_vf(mesh), np.ascontiguousarray(points, dtype=np.float64)) > 0.5
+
+
+def distance(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
+    """Unsigned distance from each point to the mesh surface."""
+    import igl
+    if len(points) == 0:
+        return np.zeros(0)
+    d2, _, _ = igl.point_mesh_squared_distance(np.ascontiguousarray(points, dtype=np.float64), *_vf(mesh))
+    return np.sqrt(d2)
+
+
+def signed_distance(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
+    """Distance to the surface, positive inside (trimesh's convention); the sign comes from the winding number."""
+    return np.where(inside(mesh, points), 1.0, -1.0) * distance(mesh, points)
+
+
+def sample_surface(mesh: trimesh.Trimesh, spacing: float, faces: np.ndarray | None = None
+                   ) -> tuple[np.ndarray, np.ndarray]:
+    """About one point per spacing² of area on the triangles (all, or the `faces` indices). Returns (points, face
+    index of each point). Every triangle gets at least one point.
+
+    Each triangle's points follow a fixed low-discrepancy (R2) pattern in barycentric coordinates, so a triangle
+    gets the same points whichever other triangles are sampled, and they move with the mesh under a rigid motion."""
+    idx = np.arange(len(mesh.faces)) if faces is None else np.asarray(faces)
+    tri = mesh.triangles[idx]
+    counts = np.maximum(1, np.ceil(mesh.area_faces[idx] / spacing ** 2).astype(np.int64))
+    t = np.repeat(tri, counts, axis=0)
+    j = np.arange(len(t)) - np.repeat(np.cumsum(counts) - counts, counts)     # index within its triangle
+    g = 1.32471795724474602596                                                # plastic number
+    u, v = (0.5 + j[None, :] * np.array([[1 / g], [1 / g ** 2]])) % 1.0
+    flip = u + v > 1.0
+    u[flip], v[flip] = 1.0 - u[flip], 1.0 - v[flip]
+    pts = t[:, 0] + u[:, None] * (t[:, 1] - t[:, 0]) + v[:, None] * (t[:, 2] - t[:, 0])
+    return pts, np.repeat(idx, counts)
+
+
 # --------------------------------------------------------------------------- primitives
 
 def along_y(local: m3d.Manifold, y0: float, y1: float) -> m3d.Manifold:

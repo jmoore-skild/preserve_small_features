@@ -11,3 +11,5 @@ loads:
     magnitude: 200.0
     direction: [0, 0, -1]
     behavior: deformable
+
+legacy_beam_metrics: true  # measure: also report the Phase 4 bore-fit and seat metrics (until Gate 4)

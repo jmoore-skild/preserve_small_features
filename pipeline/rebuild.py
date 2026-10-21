@@ -1,9 +1,9 @@
 """Exclude-and-rebuild post-processing (plan Section 8): final = (opt ∪ keep) ∩ space.
 
-    python -m pipeline.rebuild --run-dir runs/M3_h4 [--geometry-dir geometry] [--config config/runs/M3_h4.yaml]
+    python -m pipeline.rebuild --run-dir runs/<part>/<id>
 
-Writes final.stl (main body), islands.stl, rebuild.json. Hard failures exit non-zero after
-writing rebuild.json with status "fail".
+Reads the run's config.yaml (for the part), its opt.stl, and geometry/<part>/. Writes final.stl (main body),
+islands.stl, rebuild.json. Hard failures exit non-zero after writing rebuild.json with status "fail".
 """
 from __future__ import annotations
 
@@ -16,8 +16,12 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
-from pipeline import geom
-from pipeline.config import bore_radius, bores, keep_radius, load_config
+from pipeline import geom, regions as rg
+from pipeline.config import geometry_dir, read_run_config
+
+
+# Booleans can leave zero-volume sliver components (bracket M3_h2: four of them); they are dropped, and counted.
+DEGENERATE_VOLUME = 1e-3   # mm^3
 
 
 class RebuildError(RuntimeError):
@@ -31,47 +35,52 @@ class RebuildResult:
     report: dict = field(default_factory=dict)
 
 
-# --------------------------------------------------------------------------- probes
+# --------------------------------------------------------------------------- components
 
-def keep_probes(cfg: dict) -> dict[str, np.ndarray]:
-    """One point per keep zone, mid-wall: radius (r + R)/2 on the +X side, at y = T/2."""
-    rho = 0.5 * (bore_radius(cfg) + keep_radius(cfg))
-    y = 0.5 * cfg["beam"]["thickness"]
-    return {b.name: np.array([b.x + rho, y, b.z]) for b in bores(cfg)}
+def classify_components(mesh: trimesh.Trimesh, geo: rg.PartGeometry) -> dict:
+    """Split into connected bodies and find the main body, the one holding every FIX and LOAD region.
 
-
-def classify_components(mesh: trimesh.Trimesh, cfg: dict) -> dict:
-    """Split into connected bodies and find the main body (contains every FIX and LOAD probe).
-
-    Returns {"bodies": [trimesh...], "main": index or None, "components": [...], "passive_attached": {...}}.
+    A region belongs to the body that holds most of its overlap volume K ∩ SPACE (none if no body reaches it).
+    Returns {"bodies": [trimesh...], "main": index or None, "components": [...], "region_body": {...},
+    "fix_load_connected": bool, "passive_attached": {...}}.
     """
-    bodies = [geom.to_trimesh(c) for c in geom.to_manifold(mesh).decompose()]
-    bodies.sort(key=lambda b: -b.volume)
-    probes = keep_probes(cfg)
-    names = list(probes)
-    pts = np.array([probes[n] for n in names])
+    parts = geom.to_manifold(mesh).decompose()
+    bodies = sorted((b for b in parts if b.volume() > DEGENERATE_VOLUME), key=lambda b: -b.volume())
+    m_space = geom.to_manifold(geo.space)
+    cores = {r.name: geom.to_manifold(geo.region_keep(r.name)) ^ m_space for r in geo.regions}
 
-    components = []
+    def box(m):
+        bb = np.array(m.bounding_box())
+        return bb[:3], bb[3:]
+
+    overlap = np.zeros((len(bodies), len(cores)))
     for i, body in enumerate(bodies):
-        inside = body.contains(pts)
-        components.append({"index": i, "volume": float(body.volume),
-                           "probes": [n for n, hit in zip(names, inside) if hit]})
+        lo, hi = box(body)
+        for j, core in enumerate(cores.values()):
+            clo, chi = box(core)
+            if np.all(hi >= clo) and np.all(chi >= lo):
+                overlap[i, j] = (body ^ core).volume()
+    names = list(cores)
+    region_body = {n: (int(np.argmax(overlap[:, j])) if overlap[:, j].max() > 0 else None)
+                   for j, n in enumerate(names)}
 
-    required = {b.name for b in bores(cfg) if b.zone in ("FIX", "LOAD")}
-    main = next((c["index"] for c in components if required <= set(c["probes"])), None)
+    components = [{"index": i, "volume": float(b.volume()),
+                   "regions": [n for n in names if region_body[n] == i]} for i, b in enumerate(bodies)]
+    required = {r.name for r in geo.regions if r.role in ("FIX", "LOAD")}
+    main = next((c["index"] for c in components if required <= set(c["regions"])), None)
     for c in components:
         c["role"] = "main" if c["index"] == main else "island"
-
-    passive = [b.name for b in bores(cfg) if b.zone == "PASSIVE"]
-    main_probes = set(components[main]["probes"]) if main is not None else set()
-    where = {n: next((c["index"] for c in components if n in c["probes"]), None) for n in names}
     return {
-        "bodies": bodies,
+        "bodies": [geom.to_trimesh(b) for b in bodies],
         "main": main,
         "components": components,
-        "probe_body": where,
+        "region_body": region_body,
+        "region_overlap_fraction": {n: float(overlap[region_body[n], j] / cores[n].volume())
+                                    if region_body[n] is not None else 0.0 for j, n in enumerate(names)},
         "fix_load_connected": main is not None,
-        "passive_attached": {n: n in main_probes for n in passive},
+        "passive_attached": {r.name: main is not None and region_body[r.name] == main
+                             for r in geo.of_role("PASSIVE")},
+        "degenerate_dropped": len(parts) - len(bodies),
     }
 
 
@@ -109,14 +118,14 @@ def check_inputs(opt: trimesh.Trimesh, keep: trimesh.Trimesh, space: trimesh.Tri
 
 # --------------------------------------------------------------------------- rebuild
 
-def rebuild(opt: trimesh.Trimesh, keep: trimesh.Trimesh, space: trimesh.Trimesh, cfg: dict) -> RebuildResult:
-    checks = check_inputs(opt, keep, space, cfg)
+def rebuild(opt: trimesh.Trimesh, geo: rg.PartGeometry, cfg: dict) -> RebuildResult:
+    checks = check_inputs(opt, geo.keep, geo.space, cfg)
 
-    m_opt, m_keep, m_space = (geom.to_manifold(m) for m in (opt, keep, space))
+    m_opt, m_keep, m_space = (geom.to_manifold(m) for m in (opt, geo.keep, geo.space))
     united = m_opt + m_keep
     final_all = united ^ m_space
 
-    cls = classify_components(geom.to_trimesh(final_all), cfg)
+    cls = classify_components(geom.to_trimesh(final_all), geo)
     v_union, v_all = united.volume(), final_all.volume()
     report = {
         "status": "ok",
@@ -130,14 +139,16 @@ def rebuild(opt: trimesh.Trimesh, keep: trimesh.Trimesh, space: trimesh.Trimesh,
             "islands": None,
         },
         "components": cls["components"],
-        "probe_body": cls["probe_body"],
+        "region_body": cls["region_body"],
+        "region_overlap_fraction": cls["region_overlap_fraction"],
+        "degenerate_components_dropped": cls["degenerate_dropped"],
         "fix_load_connected": cls["fix_load_connected"],
         "passive_attached": cls["passive_attached"],
     }
     if cls["main"] is None:
         report["status"] = "fail"
         report["reason"] = ("FIX and LOAD are not in one body: the rebuild has broken the load path. "
-                            f"Probe -> body: {cls['probe_body']}")
+                            f"Region -> body: {cls['region_body']}")
         raise RebuildError(report["reason"], report)
 
     bodies = cls["bodies"]
@@ -154,19 +165,17 @@ def rebuild(opt: trimesh.Trimesh, keep: trimesh.Trimesh, space: trimesh.Trimesh,
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-dir", required=True, type=Path)
-    ap.add_argument("--geometry-dir", default=Path("geometry"), type=Path)
-    ap.add_argument("--config", action="append", default=[], help="override YAML(s) merged onto base.yaml")
+    ap.add_argument("--geometry-dir", type=Path, help="default: geometry/<part of the run>")
     ap.add_argument("--opt", type=Path, help="default: <run-dir>/opt.stl")
     a = ap.parse_args(argv)
 
-    cfg = load_config(*a.config)
+    cfg = read_run_config(a.run_dir)
     opt = geom.load_mesh(a.opt or a.run_dir / "opt.stl")
-    keep = geom.load_mesh(a.geometry_dir / "keep.stl")
-    space = geom.load_mesh(a.geometry_dir / "space.stl")
+    geo = rg.load_part_geometry(a.geometry_dir or geometry_dir(cfg["part"]))
 
     out = a.run_dir / "rebuild.json"
     try:
-        res = rebuild(opt, keep, space, cfg)
+        res = rebuild(opt, geo, cfg)
     except RebuildError as e:
         report = e.args[1] if len(e.args) > 1 else {"status": "fail", "reason": str(e)}
         out.write_text(json.dumps(report, indent=2), encoding="utf-8")

@@ -7,8 +7,10 @@ __pycache__/
 geometry/*.step
 geometry/*.stl
 runs/*/
+runs/*.log
 !runs/.gitkeep
 results/*.png
+results/*/*.png
 
 # Ansys scratch
 *.mechdat.lock

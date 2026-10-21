@@ -145,27 +145,30 @@ Intersecting last means bores and outer faces always come from one tessellation 
 ## 6. Repository layout and conventions
 
 ```
-topo-rebuild-eval/
-├── PLAN.md                     # this file
+preserve_small_features/
+├── topo-opt-rebuild-plan.md    # this file
 ├── config/
-│   ├── base.yaml               # all parameters (Section 4)
-│   ├── onshape.yaml            # document/workspace/element IDs (no secrets)
-│   └── runs/                   # per-run overrides: method, h, extras
-├── featurescript/
-│   └── TopoTestBeam.fs
+│   ├── base.yaml               # shared parameters (Section 4)
+│   ├── onshape.yaml            # document/workspace IDs, STL export settings (no secrets)
+│   ├── parts/<part>.yaml       # Part Studio, supports and loads by region, overrides of base.yaml
+│   └── runs/<run_id>.yaml      # per-run overrides: method, h, extras (shared by all parts)
+├── featurescript/              # PreserveRegion.fs, TopoTestBeam.fs, TestBracket.fs
+├── docs/modelling.md           # how to model and mark a part
 ├── pipeline/
-│   ├── onshape_export.py       # REST export: STEP (SPACE), fine STL (SPACE, KEEP_*)
-│   ├── geometry_check.py       # verify exports against base.yaml
-│   ├── run_mechanical.py       # PyMechanical: import → mesh → static → level-set TO → export
+│   ├── onshape_export.py       # REST export: STEP (SPACE), fine STL (SPACE, KEEP_*), regions.json
+│   ├── geometry_check.py       # generic checks on the export, writes keep.stl
+│   ├── regions.py              # regions, S and P, face matching, PartGeometry
+│   ├── run_mechanical.py       # PyMechanical: import → mesh → face matching → static → level-set TO → export
 │   ├── rebuild.py              # (opt ∪ keep) ∩ space + island handling (Section 8)
-│   ├── measure.py              # metrics (Section 9)
-│   ├── validate.py             # tet mesh → PyMAPDL static (Section 9)
+│   ├── measure.py              # metrics (Phase 6 table, Section 9)
+│   ├── validate.py             # Prime tet mesh → PyMAPDL static (Section 9)
 │   ├── synth.py                # synthetic opt meshes with planted defects (Phase 2)
-│   └── collect.py              # aggregate → results/summary.csv + plots
-├── tests/                      # pytest: rebuild + measure against synth cases
-├── geometry/                   # exported STEP/STL, shared by all runs
-├── runs/<run_id>/              # config snapshot, .mechdat, opt.stl, final.stl,
-│                               # islands.stl, metrics.json, validation.json, logs
+│   └── collect.py              # aggregate → results/<part>/summary.csv + plots
+├── scripts/run_matrix.py       # solve → rebuild → measure → validate per run
+├── tests/                      # pytest: rebuild, measure, regions, validate BCs on the procedural beam
+├── geometry/<part>/            # exported STEP/STL, regions.json, keep.stl (gitignored)
+├── runs/<part>/<run_id>/       # config snapshot, .mechdat, opt.stl, final.stl, islands.stl,
+│                               # mechanical.json, rebuild.json, metrics.json, validation.json, logs
 └── results/
 ```
 
@@ -178,7 +181,7 @@ topo-rebuild-eval/
 **Dependencies:**
 
 - Ansys: `ansys-mechanical-core`, `ansys-mapdl-core`.
-- Geometry: `trimesh`, `manifold3d`, `rtree`.
+- Geometry: `trimesh`, `manifold3d`, `rtree`, `libigl` (point queries: winding numbers, distances).
 - Validation meshing: `ansys-meshing-prime` (PyPrimeMesh, matched to the Ansys release). It writes the CDB that MAPDL reads. TetGen and gmsh were tried and dropped in Phase 3 (see Section 13).
 - General: `numpy`, `scipy`, `pyyaml`, `pytest`, `matplotlib`.
 

@@ -1,13 +1,14 @@
-"""Aggregate every run in runs/ into results/summary.csv and the Phase 4 plots.
+"""Aggregate one part's runs into results/<part>/summary.csv and plots.
 
-    python -m pipeline.collect                 # writes results/summary.csv and results/*.png
+    python -m pipeline.collect --part bracket  # writes results/bracket/summary.csv and results/bracket/*.png
 
-Reads runs/<id>/{mechanical,metrics,validation}.json. M0R runs take their TO data from the matching M0 run.
+Reads runs/<part>/<id>/{mechanical,metrics,validation}.json. M0R runs take their TO data from the matching M0 run.
 Run directories starting with "_" and check_full_space are skipped. The reference for specific stiffness
 and speedup is the finest M3 run.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 from pathlib import Path
@@ -36,13 +37,14 @@ def series(run_id: str) -> str:
     return "X2" if run_id.endswith("_X2") else run_id.split("_")[0]
 
 
-def collect() -> list[dict]:
+def collect(part: str) -> list[dict]:
     rows = []
-    for d in sorted(p for p in RUNS.iterdir() if p.is_dir() and not p.name.startswith("_")):
+    runs = RUNS / part
+    for d in sorted(p for p in runs.iterdir() if p.is_dir() and not p.name.startswith("_")):
         metrics = load(d / "metrics.json")
         if metrics is None:
             continue
-        mech = load(RUNS / d.name.replace("M0R_", "M0_", 1) / "mechanical.json") or {}
+        mech = load(runs / d.name.replace("M0R_", "M0_", 1) / "mechanical.json") or {}
         val = load(d / "validation.json")
         opt = mech.get("optimizer", {})
         s, c, v = metrics["summary"], metrics["connectivity"], metrics["volumes"]
@@ -52,21 +54,30 @@ def collect() -> list[dict]:
             "cores": mech.get("cores", {}).get("topology"),
             "to_time_s": mech.get("wall_time", {}).get("solve_topology"),
             "volume_fraction": opt["volume_final"] / opt["volume_initial"] if opt else None,
-            "bore_radius_error_mm": s["bore_max_abs_radius_error"],
-            "bore_axis_offset_mm": s["bore_max_axis_offset"],
-            "bore_radial_deviation_mm": s["bore_max_radial_deviation"],
-            "bores_missing": len(s["bores_missing"]),
-            "seat_deviation_mm": s["seat_max_deviation"], "seat_misses": s["seat_misses"],
+            "surface_max_deviation_mm": s["surface_max_deviation"],
+            "surface_max_p99_deviation_mm": s["surface_max_p99_deviation"],
+            "surface_max_beyond_fraction": s["surface_max_beyond_fraction"],
+            "surface_regions_failing": len(s["surface_regions_failing"]),
             "fix_load_connected": c["fix_load_connected"],
             "passive_attached": sum(c["passive_attached"].values()),
             "seam_flags": len(s["seam_flags"]),
+            "detached": len(s["detached"]),
             "pass": all(metrics["pass"].values()) if metrics["rebuilt"] else None,
             "V_opt": v.get("opt"), "V_added": v.get("added"), "V_trimmed": v.get("trimmed"),
             "V_final": v.get("final"), "V_islands": v.get("islands"),
         }
+        if "legacy_beam" in metrics:
+            row.update({
+                "bore_radius_error_mm": s["bore_max_abs_radius_error"],
+                "bore_axis_offset_mm": s["bore_max_axis_offset"],
+                "seat_deviation_mm": s["seat_max_deviation"], "seat_misses": s["seat_misses"],
+                "legacy_seam_flags": len(s["legacy_seam_flags"]),
+            })
         if val and val.get("status") == "ok":
             row.update({
-                "pilot_uz_mm": val["pilot_uz"], "converged": val["converged"],
+                "pilot_u_along_load_mm": val["pilot_u_along_load"][0] if len(val["pilot_u_along_load"]) == 1
+                else val["pilot_u_along_load"],
+                "converged": val["converged"],
                 "stiffness_N_per_mm": val["stiffness"], "mass_kg": val["mass"],
                 "specific_stiffness": val["specific_stiffness"], "strain_energy_Nmm": val["strain_energy"],
                 "optimizer_strain_energy_Nmm": opt.get("compliance_final"),
@@ -135,8 +146,8 @@ def plot_fidelity(rows, path):
     import matplotlib.pyplot as plt
     floor = 1e-5                                     # zero seat deviation drawn at the floor (log axis)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.4), facecolor=SURFACE)
-    for ax, key, title in ((axes[0], "bore_radius_error_mm", "Bore radius error (mm)"),
-                           (axes[1], "seat_deviation_mm", "Washer-seat deviation (mm)")):
+    for ax, key, title in ((axes[0], "surface_max_deviation_mm", "Preserved surface, max deviation (mm)"),
+                           (axes[1], "surface_max_p99_deviation_mm", "Preserved surface, 99th percentile (mm)")):
         _axes(ax, title)
         _line_by_h(ax, rows, key, floor)
         ax.axhline(0.02, color=INK_2, linewidth=1, linestyle="--")
@@ -149,7 +160,8 @@ def plot_fidelity(rows, path):
         ax.set_xticks([1, 2, 4], ["1", "2", "4"])
         ax.minorticks_off()
         ax.set_xlabel("TO mesh size h (mm)", color=INK_2, fontsize=9)
-    axes[1].set_title(f"Washer-seat deviation (mm; 0 drawn at {floor:g})", loc="left", color=INK, fontsize=11)
+    axes[1].set_title(f"Preserved surface, 99th pct. (mm; 0 drawn at {floor:g})", loc="left", color=INK,
+                      fontsize=11)
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, fontsize=8, loc="lower center", ncol=4)
     fig.tight_layout(rect=(0, 0.07, 1, 1))
@@ -216,14 +228,18 @@ def plot_volumes(rows, path):
     plt.close(fig)
 
 
-def main() -> int:
-    rows = collect()
-    RESULTS.mkdir(exist_ok=True)
-    write_csv(rows, RESULTS / "summary.csv")
-    plot_fidelity(rows, RESULTS / "fidelity_vs_h.png")
-    plot_stiffness_vs_time(rows, RESULTS / "stiffness_vs_time.png")
-    plot_volumes(rows, RESULTS / "volume_bookkeeping.png")
-    print(f"{len(rows)} runs -> results/summary.csv, fidelity_vs_h.png, stiffness_vs_time.png, "
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--part", required=True)
+    a = ap.parse_args(argv)
+    rows = collect(a.part)
+    out = RESULTS / a.part
+    out.mkdir(parents=True, exist_ok=True)
+    write_csv(rows, out / "summary.csv")
+    plot_fidelity(rows, out / "fidelity_vs_h.png")
+    plot_stiffness_vs_time(rows, out / "stiffness_vs_time.png")
+    plot_volumes(rows, out / "volume_bookkeeping.png")
+    print(f"{len(rows)} runs -> results/{a.part}/summary.csv, fidelity_vs_h.png, stiffness_vs_time.png, "
           f"volume_bookkeeping.png")
     return 0
 
