@@ -84,9 +84,9 @@ Other results:
 
 ## 4. For Gate 4
 
-1. **Retire the beam-only metrics?** Recommended. The preserved-surface metric agrees with the bore-fit and seat
-   metrics on every beam run: rebuilt runs are exact, and raw M0 fails. It also works on the bracket, where the
-   old ones can't.
+1. **Retire the beam-only metrics?** *Decided 2026-10-21: retired.* The preserved-surface metric agrees with the
+   bore-fit and seat metrics on every beam run: rebuilt runs are exact, and raw M0 fails. It also works on the
+   bracket, where the old ones can't. (The beam figures in Section 1 were measured before the retirement.)
 2. **Settings for your part:** M3 + rebuild at h = 2, then validate. On the bracket, h = 4 loses 3 % specific
    stiffness and necks at the LOAD keeps; h = 2 doesn't. That matches the beam's recommendation.
 3. **Your part's YAML:** use the real load and material. The PETG placeholder and the 150 N test load are for

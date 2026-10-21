@@ -376,7 +376,7 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 | Seam necks | Distance bands outside each K inside `SPACE`, in 0.5 mm steps up to the smaller of 2h and half the gap to the nearest other keep. Per band: the fraction of `SPACE`'s band volume that `final` keeps (grid sampling). | Flag dips > 25 % |
 
 - [x] Implement these metrics. On the beam, the bands are the existing cylindrical shells, so the seam results should match the old metric. *They flag the same keeps. The new profile is a volume fraction rather than an absolute cross-section, so the dip values differ.*
-- [x] Keep the bore-fit and seat metrics running on the beam until Gate 4 so the two can be compared (`legacy_beam_metrics` in the part YAML).
+- [x] Keep the bore-fit and seat metrics running on the beam until Gate 4 so the two can be compared. *Retired at Gate 4 (2026-10-21); their Phase 4 values stay in `runs/_phase4/`.*
 
 *Refinements made while implementing:*
 - *P also requires K's material behind the surface: the point 2ε into the material must be inside K. Without that, a face that only touches K's void margin counted as preserved. On the bracket this was a 0.5 mm band of the unselected counterbore wall above the marked step.*
@@ -694,3 +694,11 @@ Gate 4 questions for Josh (Section 4 of `results/general_geometry.md`):
 3. The real load and material for his part YAML.
 
 Next session: after Gate 4, Phase 7 (skill and plugin) or Phase 8 (Josh's part), whichever Josh picks.
+
+**2026-10-21 — Gate 4, decision 1.** Josh retired the beam-only metrics (bore fits, washer seats, cylindrical seam
+shells). They are removed from `measure.py`, `collect.py`, the part YAMLs and the tests, and the beam runs are
+re-measured. The Phase 1 analytic geometry checks (`legacy_beam_checks`) are separate and stay.
+
+Decisions 2 and 3 (settings and load for "his part") are open. Josh asked whether "his part" meant the bracket. It
+means Phase 8's first real part, which he models himself; Claude asked what that part is and how it is held and
+loaded. If there is no part yet, Phase 7 can come first.

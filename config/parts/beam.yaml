@@ -18,4 +18,3 @@ loads:
     behavior: deformable
 
 legacy_beam_checks: true   # geometry_check: also run the Phase 1 analytic checks (bore fits, coaxial keeps)
-legacy_beam_metrics: true  # measure: also report the Phase 4 bore-fit and seat metrics (until Gate 4)

@@ -11,9 +11,9 @@ BASES = ["exact", "coarse"]
 CLEAN = {"preserved_surface": True, "load_path": True}
 
 
-def run(case, geo, cfg, base, defects="", legacy=False):
+def run(case, geo, cfg, base, defects=""):
     res = rebuild.rebuild(case(base, defects), geo, cfg)
-    met = measure.measure(res.final, geo, cfg, H, rebuild_report=res.report, legacy=legacy)
+    met = measure.measure(res.final, geo, cfg, H, rebuild_report=res.report)
     return res, met
 
 
@@ -27,14 +27,12 @@ def surface(met, region):
 def test_metrics_pass_on_exact_space(cfg, geo):
     """Sanity: the metrics themselves read the true CAD as exact."""
     assert all(r["ok"] for r in measure.preserved_surface(geo.space, geo, cfg))
-    assert all(r["ok"] for r in measure.bore_fidelity(geo.space, cfg))
-    assert all(r["ok"] for r in measure.seat_flatness(geo.space, cfg))
 
 
 @pytest.mark.parametrize("base", BASES)
 def test_clean_rebuild_passes(case, geo, cfg, base):
-    res, met = run(case, geo, cfg, base, legacy=True)
-    assert met["pass"] == {**CLEAN, "bore_fidelity": True, "seat_flatness": True}
+    res, met = run(case, geo, cfg, base)
+    assert met["pass"] == CLEAN
     assert met["summary"]["surface_max_deviation"] < 0.005
     assert all(res.report["passive_attached"].values())
     assert res.islands is None

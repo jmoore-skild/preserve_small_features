@@ -3,7 +3,7 @@
 # on top of this file; per-run settings (method, h) in config/runs/<run>.yaml, merged last.
 #
 # beam, bore, keep, washer, zones: the cantilever's analytic geometry. Used by the procedural stand-in (synth,
-# tests), the Phase 1 analytic geometry checks and the beam-only bore/seat metrics (legacy_beam_metrics).
+# tests) and the Phase 1 analytic geometry checks (legacy_beam_checks).
 
 beam:
   length: 200.0        # X, root face at x = 0
@@ -78,14 +78,7 @@ rebuild:
   inside_space_tolerance: 1.0 # mm; opt vertices may sit on (or bulge slightly past) space's faces
 
 measure:
-  bore_fidelity_tol: 0.02     # mm
-  seat_flatness_tol: 0.02     # mm
-  bore_band_inner_factor: 0.5 # x r
-  bore_band_outer_offset: 1.5 # mm beyond r
-  bore_band_y_margin: 0.5     # mm from each face
-  bore_min_vertices: 30
-  seat_grid_step: 0.25        # mm
-  seam_shell_step: 0.5        # mm
+  seam_shell_step: 0.5        # mm, width of the seam distance bands
   seam_dip_flag: 0.25         # fractional dip
   specific_stiffness_tol: 0.10
   surface_spacing: 0.1        # mm, preserved-surface sample spacing

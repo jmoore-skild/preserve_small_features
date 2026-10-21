@@ -66,13 +66,6 @@ def collect(part: str) -> list[dict]:
             "V_opt": v.get("opt"), "V_added": v.get("added"), "V_trimmed": v.get("trimmed"),
             "V_final": v.get("final"), "V_islands": v.get("islands"),
         }
-        if "legacy_beam" in metrics:
-            row.update({
-                "bore_radius_error_mm": s["bore_max_abs_radius_error"],
-                "bore_axis_offset_mm": s["bore_max_axis_offset"],
-                "seat_deviation_mm": s["seat_max_deviation"], "seat_misses": s["seat_misses"],
-                "legacy_seam_flags": len(s["legacy_seam_flags"]),
-            })
         if val and val.get("status") == "ok":
             row.update({
                 "pilot_u_along_load_mm": val["pilot_u_along_load"][0] if len(val["pilot_u_along_load"]) == 1

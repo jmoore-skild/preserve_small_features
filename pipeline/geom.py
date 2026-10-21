@@ -181,11 +181,3 @@ def fit_cylinder_y(pts: np.ndarray, cx0: float, cz0: float, r0: float, y_mid: fl
     cx, cz, a, b, rho = sol.x
     return {"cx": cx, "cz": cz, "tilt_x": a, "tilt_z": b, "radius": rho,
             "rms": float(np.sqrt(np.mean(sol.fun ** 2)))}
-
-
-def angular_coverage(pts: np.ndarray, cx: float, cz: float, bins: int = 36) -> float:
-    if len(pts) == 0:
-        return 0.0
-    ang = np.arctan2(pts[:, 2] - cz, pts[:, 0] - cx)
-    idx = ((ang + math.pi) / (2 * math.pi) * bins).astype(int) % bins
-    return len(np.unique(idx)) / bins
