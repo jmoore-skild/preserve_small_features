@@ -2,7 +2,8 @@
 
     python -m pipeline.onshape_export --part <part> [--out geometry/<part>]
 
-The part's Part Studio is config/parts/<part>.yaml `onshape.element_id`; the document, workspace, host and STL
+The part's Part Studio is config/parts/<part>.yaml `onshape.url` (the Part Studio URL) or `onshape.element_id` (plus
+`document_id` / `workspace_id` for another document); the defaults for those, the host and the STL
 parameters come from config/onshape.yaml. Keeps are found by name (KEEP_<ROLE>_<label>[_<k>]), not from the
 config. Needs ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY in the environment (or the Windows user environment).
 Writes space.step, space.stl, keep_parts/KEEP_*.stl, regions.json and export.json.
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -63,6 +65,18 @@ class Onshape:
     def post(self, path: str, body: dict) -> requests.Response:
         return self._send("POST", self.url(path), json=body,
                           headers={"Accept": "application/json", "Content-Type": "application/json"})
+
+
+def parse_url(url: str) -> dict:
+    """base_url, document_id, workspace_id and element_id from a Part Studio URL
+    (https://<host>/documents/<did>/w/<wid>/e/<eid>)."""
+    u = urlparse(url)
+    m = re.match(r"^/documents/([0-9a-f]{24})/w/([0-9a-f]{24})/e/([0-9a-f]{24})", u.path)
+    if not (u.scheme and u.netloc and m):
+        raise ValueError(f"not an Onshape Part Studio workspace URL: {url!r} "
+                         "(expected https://<host>/documents/<did>/w/<wid>/e/<eid>)")
+    return {"base_url": f"{u.scheme}://{u.netloc}", "document_id": m.group(1), "workspace_id": m.group(2),
+            "element_id": m.group(3)}
 
 
 def _dwe(oc: dict) -> str:
@@ -171,6 +185,8 @@ def main(argv=None) -> int:
     part = load_part(a.part)
     oc = yaml.safe_load(ONSHAPE_CONFIG.read_text(encoding="utf-8"))
     oc.update(part.get("onshape") or {})
+    if oc.get("url"):
+        oc.update(parse_url(oc["url"]))
     missing = [k for k in ("document_id", "workspace_id", "element_id") if not oc.get(k)]
     if missing:
         print(f"Onshape IDs missing (config/onshape.yaml or the part's `onshape`): {', '.join(missing)}",

@@ -415,7 +415,7 @@ The beam code assumes Y-axis bores at coordinates listed in `base.yaml`. Every b
 
 ### Phase 7 — Skill and plugin
 
-- [ ] Project skill `.claude/skills/topo-rebuild/SKILL.md` (check the current skill format first). It covers:
+- [x] Project skill `.claude/skills/topo-rebuild/SKILL.md` (check the current skill format first). It covers: *(done 2026-10-21, with `reading-results.md`, `troubleshooting.md` and `part-template.yaml` alongside; the part YAML can now take the Part Studio URL as `onshape.url`)*
   - the modelling contract, linking `docs/modelling.md`;
   - the command order, and where to stop for review (after `geometry_check`, and after the first TO run);
   - the recommended settings (M3 + rebuild at h = 2; validate the rebuilt part);

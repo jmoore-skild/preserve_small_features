@@ -19,3 +19,4 @@ results/*/*.png
 geometry/keep_parts/
 geometry/*.json
 geometry/*/
+.claude/settings.local.json

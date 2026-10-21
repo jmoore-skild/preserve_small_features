@@ -1,0 +1,25 @@
+# config/parts/<part>.yaml — one per part. Merged on top of config/base.yaml, so any base key can be overridden
+# here (material, topology_optimization, ...). Region names are <ROLE>_<label> as the Preserve region features
+# show them ("Preserve Fix 1" -> FIX_1).
+onshape:
+  url: https://skildai.onshape.com/documents/<did>/w/<wid>/e/<eid>   # the Part Studio, copied from the browser
+
+supports:
+  - type: fixed
+    regions: all            # every FIX region; or a list, e.g. [FIX_1, FIX_BASE]
+loads:                      # one remote force per entry, spread over its regions (deformable by default)
+  - type: remote_force
+    regions: all            # every LOAD region; or a list
+    magnitude: 150.0        # N
+    direction: [1, 0, 0]    # in the Part Studio's coordinates; normalized
+    behavior: deformable
+
+material:                   # base.yaml has a PETG-like placeholder; set the real one
+  name: PETG
+  youngs_modulus: 2000.0    # MPa
+  poisson_ratio: 0.35
+  density: 1270.0           # kg/m^3
+  template: Polyethylene    # Ansys General_Materials.xml entry cloned for the material; E, nu, rho overwritten
+
+# topology_optimization:
+#   retain_volume_fraction: 0.60

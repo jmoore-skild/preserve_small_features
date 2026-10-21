@@ -28,7 +28,9 @@ There must be at least one `FIX` and one `LOAD` region. Loads, supports and mate
 
 ## The Preserve region feature
 
-Add it from the feature toolbar (Feature Studio `PreserveRegion` in the working document). Parameters:
+Add it from the feature toolbar. In Josh's working document it is the Feature Studio `PreserveRegion`; in
+another document, add it once through **Custom features → Add custom features** from a released version of
+that document. Parameters:
 
 - **Faces to preserve:** the faces that must stay exact, all on `SPACE`.
 - **Role:** FIX, LOAD or PASSIVE.
@@ -63,8 +65,8 @@ PASSIVE). Faces that touch along an edge become one keep; separate groups become
   hole) and found that thicker exclusions (8 mm) cost stiffness without improving fidelity.
 - **m** only needs to be larger than the export tolerance. 0.5 mm works; it must be smaller than the radius of
   any concave face it grows into, or the feature fails with "Thicken failed".
-- Every region on a part should normally use the same t. (Whether Mechanical accepts several exclusion
-  thicknesses in one run is still being checked in Phase 6.)
+- **Every region on a part must use the same t.** Mechanical takes one Exclusion Thickness per optimization, so
+  the run stops with an error if the regions differ.
 
 ## Mistakes to avoid
 
@@ -86,9 +88,13 @@ part YAML (`keeps.wall_thickness`), and the face-area check is skipped for it.
 
 ## Then
 
+Create `config/parts/<part>.yaml` (template: `.claude/skills/topo-rebuild/part-template.yaml`) with the Part
+Studio URL, the supports and loads by region name, and the material. Then:
+
 ```
 python -m pipeline.onshape_export --part <part>
 python -m pipeline.geometry_check --part <part>
 ```
 
-Fix anything `geometry_check` reports before running the optimization.
+Fix anything `geometry_check` reports before running the optimization. In Claude Code, the `topo-rebuild` skill
+runs the whole chain: ask it to "run <part>".
